@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PetControl - Editar Medicamento</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.0/font/bootstrap-icons.css"
+    />
+    <link rel="stylesheet" href="../../assets/css/style.css" />
+    <link rel="stylesheet" href="../../assets/css/estiloComplementar.css" />
+
+    
+    <script>
+      window.API_BASE_URL = "http://localhost:8080";
+    </script>
+
+    <script src="../../assets/js/services/authService.js"></script>
+
+    <script src="../../assets/js/components/sidebar.js" defer></script>
+  </head>
+  <body>
+    <div class="container py-4">
+      <div class="header d-flex align-items-center">
+        <a
+          href="listarMedicamentos.html"
+          class="btn btn-outline-secondary me-3"
+        >
+          <i class="bi bi-arrow-left"></i> Voltar
+        </a>
+        <h1 class="h3 mb-0" style="color: var(--vermelho-escuro)">
+          Editar Medicamento
+        </h1>
+      </div>
+
+      <div class="bg-white shadow rounded p-4">
+        <form id="formMedicamento" class="needs-validation" novalidate>
+          <input type="hidden" id="idproduto" />
+
+          <div class="row mb-3">
+            <div class="col-md-6">
+              <label for="nome" class="form-label required"
+                >Nome do Medicamento</label
+              >
+              <input
+                type="text"
+                class="form-control"
+                id="nome"
+                required
+                data-max-length="100"
+                data-show-counter="true"
+              />
+              <div class="invalid-feedback">Por favor, informe o nome.</div>
+            </div>
+
+            <div class="col-md-6">
+              <label for="composicao" class="form-label required"
+                >Composição</label
+              >
+              <input
+                type="text"
+                class="form-control"
+                id="composicao"
+                required
+                data-max-length="200"
+                data-show-counter="true"
+              />
+              <div class="invalid-feedback">
+                Por favor, informe a composição.
+              </div>
+            </div>
+          </div>
+
+          <div class="row mb-3">
+            <div class="col-md-6">
+              <label for="tipoProduto" class="form-label required"
+                >Tipo de Produto</label
+              >
+              <select class="form-select" id="tipoProduto" required>
+                <option value="">Selecione...</option>
+              </select>
+              <div class="invalid-feedback">Por favor, selecione o tipo.</div>
+            </div>
+
+            <div class="col-md-6">
+              <label for="unidadeMedida" class="form-label required"
+                >Unidade de Medida</label
+              >
+              <select class="form-select" id="unidadeMedida" required>
+                <option value="">Selecione...</option>
+              </select>
+              <div class="invalid-feedback">
+                Por favor, selecione a unidade.
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label for="fabricante" class="form-label">Fabricante</label>
+            <input
+              type="text"
+              class="form-control"
+              id="fabricante"
+              data-max-length="100"
+            />
+          </div>
+
+          <div class="row mb-3">
+            <div class="col-md-6">
+              <label for="preco" class="form-label">Preço (R$)</label>
+              <input
+                type="text"
+                class="form-control"
+                id="preco"
+                data-mask="money"
+                placeholder="0,00"
+              />
+              <div class="invalid-feedback">Formato de preço inválido.</div>
+            </div>
+
+            <div class="col-md-6">
+              <label for="estoqueMinimo" class="form-label"
+                >Estoque Mínimo</label
+              >
+              <input
+                type="text"
+                class="form-control"
+                id="estoqueMinimo"
+                data-mask="number"
+                placeholder="0"
+              />
+              <div class="invalid-feedback">Apenas números são permitidos.</div>
+            </div>
+          </div>
+
+          <div class="d-flex justify-content-end gap-2 mt-4">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              onclick="window.location.href='listarMedicamentos.html'"
+            >
+              <i class="bi bi-x-circle me-1"></i> Cancelar
+            </button>
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-check-circle me-1"></i> Salvar Alterações
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="loadingOverlay" class="loading-overlay">
+      <div class="spinner" role="status">
+        <span class="visually-hidden">Carregando...</span>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script type="module">
+      import { medicamentoController } from "../../assets/js/controllers/MedicamentoController.js";
+      import UIComponents from "../../assets/js/components/uiComponents.js";
+
+      document.addEventListener("DOMContentLoaded", () => {
+        new medicamentoController.constructor();
+      });
+    </script>
+  </body>
+</html>

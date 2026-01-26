@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PetControl - Editar Unidade</title>
+
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.2/font/bootstrap-icons.min.css"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../../../assets/css/style.css" />
+
+    <script src="../../../assets/js/services/authService.js"></script>
+    <script src="../../../assets/js/components/sidebar.js" defer></script>
+  </head>
+  <body>
+    <div class="container py-4">
+      <div
+        class="header d-flex justify-content-between align-items-center mb-4"
+      >
+        <h1 class="h3" style="color: var(--vermelho-escuro)">
+          Editar Unidade de Medida
+        </h1>
+        <a href="listarUnidades.html" class="btn btn-outline-secondary">
+          <i class="bi bi-arrow-left me-1"></i> Voltar para a Lista
+        </a>
+      </div>
+
+      <div class="bg-white shadow rounded p-4">
+        <form id="unidadeForm" novalidate>
+          <input type="hidden" id="idUnidadeMedida" name="id" />
+
+          <div class="mb-3">
+            <label for="descricao" class="form-label">Descrição</label>
+            <input type="text" id="descricao" class="form-control" required />
+            <div class="invalid-feedback">A descrição é obrigatória.</div>
+          </div>
+
+          <div class="mb-3">
+            <label for="sigla" class="form-label">Sigla</label>
+            <input type="text" id="sigla" class="form-control" required />
+            <div class="invalid-feedback">A sigla é obrigatória.</div>
+          </div>
+
+          <div class="mt-4 d-flex justify-content-end">
+            <a href="listarUnidades.html" class="btn btn-secondary me-2"
+              >Cancelar</a
+            >
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-save me-1"></i> Salvar Alterações
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="../../../assets/js/config/config.js"></script>
+    <script
+      src="../../../assets/js/utils/mensagensPadroes.js"
+      type="module"
+    ></script>
+    <script
+      src="../../../assets/js/components/uiComponents.js"
+      type="module"
+    ></script>
+    <script
+      src="../../../assets/js/services/UnidadeMedidaService.js"
+      type="module"
+    ></script>
+    <script
+      src="../../../assets/js/controllers/UnidadeMedidaController.js"
+      type="module"
+    ></script>
+
+    <script type="module">
+      import UnidadeMedidaController from "../../../assets/js/controllers/UnidadeMedidaController.js";
+      document.addEventListener("DOMContentLoaded", () => {
+        const controller = new UnidadeMedidaController();
+        window.unidadeController = controller;
+        controller.inicializarFormulario();
+      });
+    </script>
+  </body>
+</html>
