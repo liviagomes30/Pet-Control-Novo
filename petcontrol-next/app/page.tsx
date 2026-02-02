@@ -19,7 +19,7 @@ export default function Home() {
             Sistema de Gestão para ONG SalvaCão
           </p>
           <div className="flex justify-center gap-4">
-            <Link href="/login">
+            <Link href="/dashboard">
               <Button size="lg">Entrar</Button>
             </Link>
           </div>
