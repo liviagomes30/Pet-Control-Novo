@@ -17,8 +17,23 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Instalar cliente PostgreSQL e GnuPG
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends postgresql-client gnupg
+      - name: Instalar cliente PostgreSQL 17 e GnuPG
+        # O runner traz por padrao o postgresql-client do repositorio do
+        # Ubuntu (hoje, versao 16), mais antigo que o Postgres 17 do
+        # Supabase — e pg_dump se recusa a rodar contra um servidor mais
+        # novo que ele. Instala a versao 17 do repositorio oficial do PGDG.
+        # Se o Supabase mudar a major version do Postgres, atualize aqui.
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gnupg curl ca-certificates
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-17
 
       - name: Gerar dump, comprimir e criptografar
         env:
@@ -43,7 +58,9 @@ jobs:
           # --schema=public: só os dados da aplicação. Os schemas internos do
           # Supabase (auth, storage, realtime...) não são restauráveis fora
           # dele e o usuário do dump normalmente não tem permissão neles.
-          pg_dump "$DATABASE_URL" \
+          # Caminho explicito: o runner ja vem com um pg_dump mais antigo em
+          # /usr/bin, e nao queremos depender de qual versao o PATH resolve.
+          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" \
             --schema=public \
             --no-owner \
             --no-privileges \
