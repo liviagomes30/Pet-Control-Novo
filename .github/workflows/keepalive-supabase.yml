@@ -1,0 +1,42 @@
+name: Manter Supabase ativo
+
+# Projetos gratuitos do Supabase pausam após ~7 dias sem atividade.
+# Esta rotina só existe para evitar essa pausa em períodos de uso esporádico
+# (ex: recesso de fim de ano). Não substitui o backup — ver
+# docs/backup-e-restauracao.md.
+
+on:
+  schedule:
+    - cron: "0 8 */3 * *" # a cada 3 dias, 08:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Consultar a API REST do Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            echo "::error::Secrets NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY não configurados."
+            exit 1
+          fi
+
+          # RLS bloqueia a leitura real para a role anônima — o objetivo aqui
+          # não é ler dados, é gerar uma query no banco para resetar o
+          # contador de inatividade. Uma resposta HTTP (mesmo com 0 linhas)
+          # já conta como atividade.
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            "$SUPABASE_URL/rest/v1/animal?select=idanimal&limit=1" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY")
+
+          echo "HTTP $status"
+          if [ "$status" -ge 400 ]; then
+            echo "::error::Supabase respondeu $status — projeto pode estar pausado ou credenciais inválidas."
+            exit 1
+          fi
