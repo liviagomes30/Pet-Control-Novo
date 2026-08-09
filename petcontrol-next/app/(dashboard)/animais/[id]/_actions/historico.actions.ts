@@ -1,19 +1,22 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
-
-type ActionResponse<T = unknown> = {
-  success: boolean;
-  message: string;
-  data?: T;
-};
+import { requireUser } from "@/lib/auth/require-user";
+import { falha, sucesso, type ActionResult } from "@/lib/actions/result";
 
 export type HistoricoItem = {
   id: number;
   tipo: "adocao" | "vacinacao" | "medicacao" | "evento" | "geral";
   descricao: string;
   data: string;
-  detalhes?: any;
+  detalhes?: {
+    medicamento?: string;
+    quantidade?: number | string | null;
+    vacina?: string;
+    local?: string;
+    lote?: string;
+    status?: string;
+    [key: string]: unknown;
+  };
 };
 
 /**
@@ -22,9 +25,9 @@ export type HistoricoItem = {
  */
 export async function listarHistoricoPorAnimal(
   idAnimal: number
-): Promise<ActionResponse<HistoricoItem[]>> {
+): Promise<ActionResult<HistoricoItem[]>> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     // Buscar registros da tabela historico
     const { data: historicos, error } = await supabase
@@ -41,14 +44,12 @@ export async function listarHistoricoPorAnimal(
       .eq("animal_idanimal", idAnimal)
       .order("data", { ascending: false });
 
-    if (error) {
-      return { success: false, message: error.message };
-    }
+    if (error) return falha(error, "listarHistoricoPorAnimal");
 
     // Buscar detalhes de medicações e vacinações
     const timelinePromises = (historicos || []).map(async (h) => {
       let tipo: HistoricoItem["tipo"] = "geral";
-      let detalhesExtras: any = {};
+      let detalhesExtras: Record<string, unknown> = {};
 
       if (h.medicacao_idmedicacao) {
         tipo = "medicacao";
@@ -125,20 +126,27 @@ export async function listarHistoricoPorAnimal(
     const timeline: HistoricoItem[] = await Promise.all(timelinePromises);
 
     // Buscar adoções (que podem não estar no histórico ainda)
+    // .returns<T>() corrige o join N:1 que o supabase-js infere como array
+    // sem o client tipado com `Database` (ver nota em dashboard.actions.ts).
     const { data: adocoes } = await supabase
       .from("adocao")
       .select("idadocao, dataadocao, adotante:pessoa!adocao_idadotante_fkey(nome)")
-      .eq("idanimal", idAnimal);
+      .eq("idanimal", idAnimal)
+      .returns<
+        { idadocao: number; dataadocao: string | null; adotante: { nome: string } | null }[]
+      >();
 
-    if (adocoes) {
-      adocoes.forEach((adocao: any) => {
-        timeline.push({
-          id: adocao.idadocao,
-          tipo: "adocao",
-          descricao: `Adotado por ${adocao.adotante?.nome || "adotante"}`,
-          data: adocao.dataadocao,
-          detalhes: adocao,
-        });
+    // dataadocao pode ser nula (dado legado incompleto) — sem data não há
+    // como ordenar o item na timeline, então ele é descartado em vez de
+    // quebrar o sort/format a seguir.
+    for (const adocao of adocoes ?? []) {
+      if (!adocao.dataadocao) continue;
+      timeline.push({
+        id: adocao.idadocao,
+        tipo: "adocao",
+        descricao: `Adotado por ${adocao.adotante?.nome || "adotante"}`,
+        data: adocao.dataadocao,
+        detalhes: adocao,
       });
     }
 
@@ -148,15 +156,14 @@ export async function listarHistoricoPorAnimal(
       .select("idevento, descricao, data, local, status")
       .eq("animal_idanimal", idAnimal);
 
-    if (eventos) {
-      eventos.forEach((evento: any) => {
-        timeline.push({
-          id: evento.idevento,
-          tipo: "evento",
-          descricao: evento.descricao,
-          data: evento.data,
-          detalhes: evento,
-        });
+    for (const evento of eventos ?? []) {
+      if (!evento.data) continue;
+      timeline.push({
+        id: evento.idevento,
+        tipo: "evento",
+        descricao: evento.descricao ?? "Evento",
+        data: evento.data,
+        detalhes: evento,
       });
     }
 
@@ -165,15 +172,8 @@ export async function listarHistoricoPorAnimal(
       (a, b) => new Date(b.data).getTime() - new Date(a.data).getTime()
     );
 
-    return {
-      success: true,
-      message: "Histórico carregado",
-      data: timeline,
-    };
+    return sucesso(timeline, "Histórico carregado");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "listarHistoricoPorAnimal");
   }
 }

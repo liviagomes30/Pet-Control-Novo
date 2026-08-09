@@ -9,7 +9,10 @@ import {
   registrarAdocao,
   listarAnimaisDisponiveis,
   listarPessoas,
+  type AnimalDisponivel,
+  type PessoaResumo,
 } from "../_actions/adocao.actions";
+import { hojeLocal } from "@/lib/domain/data-local";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,18 +34,8 @@ import {
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 
-interface Animal {
-  idanimal: number;
-  nome: string;
-  especie: string;
-  raca: string | null;
-}
-
-interface Pessoa {
-  idpessoa: number;
-  nome: string;
-  cpf: string;
-}
+type Animal = AnimalDisponivel;
+type Pessoa = PessoaResumo;
 
 export function AdocaoForm() {
   const router = useRouter();
@@ -54,7 +47,7 @@ export function AdocaoForm() {
   const form = useForm<AdocaoFormData>({
     resolver: zodResolver(adocaoSchema),
     defaultValues: {
-      dataadocao: new Date().toISOString().split("T")[0],
+      dataadocao: hojeLocal(),
       obs: "",
     },
   });
@@ -67,14 +60,14 @@ export function AdocaoForm() {
       ]);
 
       if (animaisRes.success) {
-        setAnimais(animaisRes.data as Animal[]);
+        setAnimais(animaisRes.data);
       }
       if (pessoasRes.success) {
-        setPessoas(pessoasRes.data as Pessoa[]);
+        setPessoas(pessoasRes.data);
       }
       setLoading(false);
     }
-    carregarDados();
+    void carregarDados();
   }, []);
 
   async function onSubmit(data: AdocaoFormData) {
@@ -95,7 +88,7 @@ export function AdocaoForm() {
           });
         }
       }
-    } catch (error) {
+    } catch {
       toast.error("Erro ao registrar adoção");
     } finally {
       setIsSubmitting(false);

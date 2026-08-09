@@ -12,7 +12,9 @@ import {
 import {
   criarProtocoloVacinal,
   listarVacinas,
+  type VacinaComProduto,
 } from "../_actions/vacinacao.actions";
+import { hojeLocal } from "@/lib/domain/data-local";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -39,12 +41,7 @@ interface ProtocoloVacinalFormProps {
   onSuccess?: () => void;
 }
 
-interface Vacina {
-  idproduto: number;
-  lote: string;
-  validade: string;
-  produto: { nome: string };
-}
+type Vacina = VacinaComProduto;
 
 export function ProtocoloVacinalForm({
   idAnimal,
@@ -62,7 +59,7 @@ export function ProtocoloVacinalForm({
       tipo_protocolo: "dose_unica",
       total_doses: null,
       intervalo_dias: null,
-      data_inicio: new Date().toISOString().split("T")[0],
+      data_inicio: hojeLocal(),
       observacoes: null,
     },
   });
@@ -74,9 +71,7 @@ export function ProtocoloVacinalForm({
 
   // Definir campos visíveis por tipo
   const showTotalDoses = tipoProtocolo === "protocolo_inicial";
-  const showIntervaloDias = ["protocolo_inicial", "personalizado"].includes(
-    tipoProtocolo
-  );
+  const showIntervaloDias = tipoProtocolo === "protocolo_inicial";
 
   // Sugestões de intervalo
   const intervalosComuns = {
@@ -84,23 +79,17 @@ export function ProtocoloVacinalForm({
       { valor: 21, label: "21 dias" },
       { valor: 30, label: "30 dias" },
     ],
-    personalizado: [
-      { valor: 30, label: "30 dias (mensal)" },
-      { valor: 90, label: "90 dias (trimestral)" },
-      { valor: 180, label: "180 dias (semestral)" },
-      { valor: 365, label: "365 dias (anual)" },
-    ],
   };
 
   useEffect(() => {
     async function carregarVacinas() {
       const response = await listarVacinas();
       if (response.success) {
-        setVacinas(response.data as Vacina[]);
+        setVacinas(response.data);
       }
       setLoading(false);
     }
-    carregarVacinas();
+    void carregarVacinas();
   }, []);
 
   async function onSubmit(data: ProtocoloVacinalFormData) {
@@ -115,7 +104,7 @@ export function ProtocoloVacinalForm({
       } else {
         toast.error(response.message);
       }
-    } catch (error) {
+    } catch {
       toast.error("Erro ao criar protocolo");
     } finally {
       setIsSubmitting(false);
@@ -206,7 +195,7 @@ export function ProtocoloVacinalForm({
                         key={vac.idproduto}
                         value={vac.idproduto.toString()}
                       >
-                        {vac.produto.nome}
+                        {vac.produto?.nome ?? "Vacina"}
                       </SelectItem>
                     ))}
                   </SelectContent>

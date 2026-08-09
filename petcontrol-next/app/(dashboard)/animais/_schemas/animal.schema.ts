@@ -12,7 +12,7 @@ const baseSchema = z.object({
   nome: z.string().min(1, "Nome é obrigatório"),
   especie: z.string().min(1, "Espécie é obrigatória"),
   sexo: z.enum(["Macho", "Fêmea"], {
-    errorMap: () => ({ message: "Selecione o sexo" }),
+    error: () => "Selecione o sexo",
   }),
   datanascimento: z
     .string()

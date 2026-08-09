@@ -23,9 +23,3 @@ export const adocaoSchema = z.object({
 });
 
 export type AdocaoFormData = z.infer<typeof adocaoSchema>;
-
-export const adocaoUpdateSchema = adocaoSchema.partial().extend({
-  idadocao: z.number(),
-});
-
-export type AdocaoUpdateData = z.infer<typeof adocaoUpdateSchema>;

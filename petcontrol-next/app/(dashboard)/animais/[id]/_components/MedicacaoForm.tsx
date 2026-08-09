@@ -8,9 +8,12 @@ import {
   registrarMedicacao,
   listarMedicamentos,
   listarMedicacoesAdministradasPorReceita,
-  buscarAgendamentoMedicacao
+  buscarAgendamentoMedicacao,
+  type MedicamentoComEstoque,
+  type AgendamentoMedicacao,
 } from "../_actions/medicacao.actions";
-import { listarReceitasPorAnimal } from "../_actions/receita.actions";
+import { listarReceitasPorAnimal, type ReceitaComPosologias } from "../_actions/receita.actions";
+import { hojeLocal } from "@/lib/domain/data-local";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -38,24 +41,8 @@ interface MedicacaoFormProps {
   onSuccess?: () => void;
 }
 
-interface Medicamento {
-  idproduto: number;
-  composicao: string;
-  produto: { nome: string };
-  estoque: number;
-}
-
-interface Receita {
-  idreceita: number;
-  data: string;
-  medico: string;
-  clinica?: string;
-  posologias: Array<{
-    medicamento_idproduto: number;
-    produto: string;
-    dose: string;
-  }>;
-}
+type Medicamento = MedicamentoComEstoque;
+type Receita = ReceitaComPosologias;
 
 export function MedicacaoForm({ idAnimal, onSuccess }: MedicacaoFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -64,14 +51,14 @@ export function MedicacaoForm({ idAnimal, onSuccess }: MedicacaoFormProps) {
   // Map: idReceita -> array de IDs de medicamentos administrados
   const [medicacoesPorReceita, setMedicacoesPorReceita] = useState<Map<number, number[]>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [agendamentoSelecionado, setAgendamentoSelecionado] = useState<any>(null);
+  const [agendamentoSelecionado, setAgendamentoSelecionado] = useState<AgendamentoMedicacao | null>(null);
 
   const form = useForm<MedicacaoFormData>({
     resolver: zodResolver(medicacaoSchema),
     defaultValues: {
       idanimal: idAnimal,
       quantidade_administrada: 0,
-      data: new Date().toISOString().split("T")[0],
+      data: hojeLocal(),
       hora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
       descricao: "",
       receita_idreceita: null,
@@ -88,25 +75,25 @@ export function MedicacaoForm({ idAnimal, onSuccess }: MedicacaoFormProps) {
       ]);
       
       if (medicamentosRes.success) {
-        setMedicamentos(medicamentosRes.data as Medicamento[]);
+        setMedicamentos(medicamentosRes.data);
       }
       if (receitasRes.success) {
-        const receitasData = receitasRes.data as Receita[];
+        const receitasData = receitasRes.data;
         setReceitas(receitasData);
-        
+
         // Carregar medicações administradas de TODAS as receitas
         const mapMedicacoes = new Map<number, number[]>();
         for (const receita of receitasData) {
           const medRes = await listarMedicacoesAdministradasPorReceita(receita.idreceita);
           if (medRes.success) {
-            mapMedicacoes.set(receita.idreceita, medRes.data as number[]);
+            mapMedicacoes.set(receita.idreceita, medRes.data);
           }
         }
         setMedicacoesPorReceita(mapMedicacoes);
       }
       setLoading(false);
     }
-    carregarDados();
+    void carregarDados();
   }, [idAnimal]);
 
   // Atualizar medicações administradas quando selecionar uma receita específica
@@ -117,14 +104,14 @@ export function MedicacaoForm({ idAnimal, onSuccess }: MedicacaoFormProps) {
         if (response.success) {
           setMedicacoesPorReceita(prev => {
             const newMap = new Map(prev);
-            newMap.set(receitaSelecionada, response.data as number[]);
+            newMap.set(receitaSelecionada, response.data);
             return newMap;
           });
         }
       }
     }
     if (receitaSelecionada) {
-      carregarMedicacoesAdministradas();
+      void carregarMedicacoesAdministradas();
     }
   }, [receitaSelecionada]);
 
@@ -143,7 +130,7 @@ export function MedicacaoForm({ idAnimal, onSuccess }: MedicacaoFormProps) {
         setAgendamentoSelecionado(null);
       }
     }
-    buscarAgendamento();
+    void buscarAgendamento();
   }, [medicamentoSelecionado, idAnimal]);
 
   async function onSubmit(data: MedicacaoFormData) {
@@ -156,7 +143,7 @@ export function MedicacaoForm({ idAnimal, onSuccess }: MedicacaoFormProps) {
         form.reset({
           idanimal: idAnimal,
           quantidade_administrada: 0,
-          data: new Date().toISOString().split("T")[0],
+          data: hojeLocal(),
           hora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
           descricao: "",
           receita_idreceita: null,
@@ -172,7 +159,7 @@ export function MedicacaoForm({ idAnimal, onSuccess }: MedicacaoFormProps) {
           });
         }
       }
-    } catch (error) {
+    } catch {
       toast.error("Erro ao registrar medicação");
     } finally {
       setIsSubmitting(false);
@@ -183,9 +170,9 @@ export function MedicacaoForm({ idAnimal, onSuccess }: MedicacaoFormProps) {
   const dataAdministracao = form.watch("data");
   const horaAdministracao = form.watch("hora");
   
-  const temDivergencia = agendamentoSelecionado && (
-    agendamentoSelecionado.data !== dataAdministracao ||
-    agendamentoSelecionado.hora.substring(0, 5) !== horaAdministracao
+  const temDivergencia = Boolean(agendamentoSelecionado) && (
+    agendamentoSelecionado!.data !== dataAdministracao ||
+    (agendamentoSelecionado!.hora ?? "").substring(0, 5) !== horaAdministracao
   );
 
   if (loading) {
@@ -268,7 +255,7 @@ export function MedicacaoForm({ idAnimal, onSuccess }: MedicacaoFormProps) {
                             key={receita.idreceita}
                             value={receita.idreceita.toString()}
                           >
-                            {receita.data.split('T')[0].split('-').reverse().join('/')} - Dr(a). {receita.medico}
+                            {(receita.data ?? '').split('T')[0].split('-').reverse().join('/')} - Dr(a). {receita.medico}
                             {` (${medicamentosPendentes}/${totalMedicamentos} pendente${medicamentosPendentes > 1 ? 's' : ''})`}
                           </SelectItem>
                         );
@@ -328,7 +315,7 @@ export function MedicacaoForm({ idAnimal, onSuccess }: MedicacaoFormProps) {
                         >
                           <div className="flex items-center justify-between w-full">
                             <span className={jaAdministrado ? "line-through text-gray-400" : ""}>
-                              {med.produto.nome} (Estoque: {med.estoque})
+                              {med.produto?.nome ?? "Produto"} (Estoque: {med.estoque})
                             </span>
                             {jaAdministrado && (
                               <CheckCircle2 className="h-4 w-4 text-green-600 ml-2" />
@@ -399,7 +386,7 @@ export function MedicacaoForm({ idAnimal, onSuccess }: MedicacaoFormProps) {
                 <Input type="time" {...field} />
               </FormControl>
               <FormDescription>
-                Este horário será usado para calcular as próximas doses
+                Horário em que esta dose foi administrada
               </FormDescription>
               <FormMessage />
             </FormItem>
@@ -434,7 +421,7 @@ export function MedicacaoForm({ idAnimal, onSuccess }: MedicacaoFormProps) {
                 <h3 className="text-sm font-medium text-yellow-800">Diferente do agendado</h3>
                 <div className="mt-2 text-sm text-yellow-700">
                   <p>
-                    <strong>Agendado:</strong> {new Date(agendamentoSelecionado.data + 'T00:00:00').toLocaleDateString('pt-BR')} às {agendamentoSelecionado.hora.substring(0, 5)}
+                    <strong>Agendado:</strong> {new Date(agendamentoSelecionado!.data + 'T00:00:00').toLocaleDateString('pt-BR')} às {(agendamentoSelecionado!.hora ?? "").substring(0, 5) || "horário não definido"}
                   </p>
                   <p>
                     <strong>Administração:</strong> {new Date(dataAdministracao + 'T00:00:00').toLocaleDateString('pt-BR')} às {horaAdministracao}

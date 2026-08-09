@@ -1,47 +1,18 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
-
-type ActionResponse<T = unknown> = {
-  success: boolean;
-  message: string;
-  data?: T;
-};
-
-export type DashboardStats = {
-  totalAnimais: number;
-  animaisDisponiveis: number;
-  animaisAdotados: number;
-  animaisEmTratamento: number;
-  vacinacoesPendentes: number;
-  medicacoesPendentes: number;
-  receitasAtivas: number;
-  protocolosAtivos: number;
-};
-
-export type ProximoCompromisso = {
-  id: string;
-  tipo: "vacinacao" | "medicacao";
-  animalNome: string;
-  animalId: number;
-  produtoNome: string;
-  dataAgendada: string;
-  hora?: string;
-  dose?: string;
-  urgencia: "hoje" | "amanha" | "semana" | "futuro" | "concluido";
-  status: "pendente" | "concluido";
-  numeroDose?: number;
-  totalDoses?: number;
-};
+import { requireUser } from "@/lib/auth/require-user";
+import { falha, sucesso, type ActionResult } from "@/lib/actions/result";
+import { dataParaISOLocal } from "@/lib/domain/data-local";
+import type { DashboardStats, ProximoCompromisso } from "./dashboard.types";
 
 /**
  * Buscar estatísticas do dashboard
  */
 export async function buscarEstatisticasDashboard(): Promise<
-  ActionResponse<DashboardStats>
+  ActionResult<DashboardStats>
 > {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     // Contagem de animais por status
     const { data: animais } = await supabase
@@ -54,7 +25,7 @@ export async function buscarEstatisticasDashboard(): Promise<
     const animaisAdotados =
       animais?.filter((a) => a.status === "Adotado").length || 0;
     const animaisEmTratamento =
-      animais?.filter((a) => a.status === "Em Tratamento").length || 0;
+      animais?.filter((a) => a.status === "Em tratamento").length || 0;
 
     // Receitas ativas
     const { count: receitasAtivas } = await supabase
@@ -62,11 +33,11 @@ export async function buscarEstatisticasDashboard(): Promise<
       .select("*", { count: "exact", head: true })
       .eq("status", "Ativa");
 
-    // Protocolos vacinais ativos
+    // Protocolos vacinais ativos (coluna `status` é texto — ver vacinacao.actions.ts)
     const { count: protocolosAtivos } = await supabase
       .from("protocolo_vacinal")
       .select("*", { count: "exact", head: true })
-      .eq("ativo", true);
+      .eq("status", "ativo");
 
     // Vacinações pendentes (da nova tabela de agenda)
     const { count: vacinacoesPendentes } = await supabase
@@ -80,10 +51,8 @@ export async function buscarEstatisticasDashboard(): Promise<
       .select("*", { count: "exact", head: true })
       .eq("status", "agendada");
 
-    return {
-      success: true,
-      message: "Estatísticas recuperadas",
-      data: {
+    return sucesso(
+      {
         totalAnimais,
         animaisDisponiveis,
         animaisAdotados,
@@ -93,22 +62,10 @@ export async function buscarEstatisticasDashboard(): Promise<
         receitasAtivas: receitasAtivas || 0,
         protocolosAtivos: protocolosAtivos || 0,
       },
-    };
+      "Estatísticas recuperadas"
+    );
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-      data: {
-        totalAnimais: 0,
-        animaisDisponiveis: 0,
-        animaisAdotados: 0,
-        animaisEmTratamento: 0,
-        vacinacoesPendentes: 0,
-        medicacoesPendentes: 0,
-        receitasAtivas: 0,
-        protocolosAtivos: 0,
-      },
-    };
+    return falha(error, "buscarEstatisticasDashboard");
   }
 }
 
@@ -117,18 +74,47 @@ export async function buscarEstatisticasDashboard(): Promise<
  * Otimizado: Busca diretamente das tabelas de agenda (V2)
  */
 export async function buscarProximosCompromissos(): Promise<
-  ActionResponse<ProximoCompromisso[]>
+  ActionResult<ProximoCompromisso[]>
 > {
   try {
-    const supabase = await createClient();
-    const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0); // Início do dia
-    
-    const em30Dias = new Date();
-    em30Dias.setDate(em30Dias.getDate() + 365); // Mostrar agenda do ano todo
+    const { supabase } = await requireUser();
 
-    const dataHojeISO = hoje.toISOString().split("T")[0];
-    const dataLimiteISO = em30Dias.toISOString().split("T")[0];
+    // Janela de 90 dias para trás: mostra doses atrasadas em vez de escondê-las
+    // (uma dose de anos atrás não é útil, então não removemos o limite por completo).
+    const dataMinima = new Date();
+    dataMinima.setDate(dataMinima.getDate() - 90);
+
+    const dataLimite = new Date();
+    dataLimite.setDate(dataLimite.getDate() + 365); // Mostrar agenda do ano todo
+
+    const dataMinimaISO = dataParaISOLocal(dataMinima);
+    const dataLimiteISO = dataParaISOLocal(dataLimite);
+
+    // Sem o client tipado com `Database` (P0 #3 do relatório de revisão — o
+    // schema real não é o versionado), o supabase-js não sabe que estes joins
+    // são N:1 e infere arrays. `.returns<T>()` corrige a forma para o shape
+    // real de uma FK simples.
+    type AgendaVacinaRow = {
+      idagendavacinacao: number;
+      data: string;
+      hora: string | null;
+      dose_numero: number;
+      status: string;
+      animal: { nome: string; idanimal: number } | null;
+      vacina: { produto: { nome: string } | null } | null;
+      protocolo: { total_doses: number } | null;
+    };
+
+    type AgendaMedRow = {
+      idagendamedicacao: number;
+      data: string;
+      hora: string | null;
+      dose_numero: number;
+      quantidade: string | null;
+      status: string;
+      animal: { nome: string; idanimal: number } | null;
+      medicamento: { produto: { nome: string } | null } | null;
+    };
 
     // 1. Buscar Agenda de Vacinação
     const { data: agendaVacinas, error: erroVacina } = await supabase
@@ -146,9 +132,10 @@ export async function buscarProximosCompromissos(): Promise<
         protocolo:protocolo_idprotocolo(total_doses)
       `)
       .or(`status.eq.agendada,status.eq.aplicada`) // Trazer pendentes e realizadas
-      .gte("data", dataHojeISO)
+      .gte("data", dataMinimaISO)
       .lte("data", dataLimiteISO)
-      .order("data", { ascending: true });
+      .order("data", { ascending: true })
+      .returns<AgendaVacinaRow[]>();
 
     if (erroVacina) {
       console.error("Erro ao buscar vacinas:", erroVacina);
@@ -170,9 +157,10 @@ export async function buscarProximosCompromissos(): Promise<
         )
       `)
       .or(`status.eq.agendada,status.eq.aplicada`)
-      .gte("data", dataHojeISO)
+      .gte("data", dataMinimaISO)
       .lte("data", dataLimiteISO)
-      .order("data", { ascending: true });
+      .order("data", { ascending: true })
+      .returns<AgendaMedRow[]>();
 
     if (erroMed) {
       console.error("Erro ao buscar medicações:", erroMed);
@@ -181,37 +169,37 @@ export async function buscarProximosCompromissos(): Promise<
     const compromissos: ProximoCompromisso[] = [];
 
     // Processar Vacinas
-    (agendaVacinas || []).forEach((item: any) => {
+    for (const item of agendaVacinas ?? []) {
       // Ajustar formato da data/hora para o componente
       // Se hora vier nula, usar 08:00
       const horaStr = item.hora || "08:00:00";
       const dataAgendada = `${item.data}T${horaStr}`;
-      
-      const urgencia = item.status === "aplicada" 
-        ? "concluido" 
+
+      const urgencia = item.status === "aplicada"
+        ? "concluido"
         : getUrgencia(new Date(dataAgendada));
 
       compromissos.push({
         id: `vac-${item.idagendavacinacao}`,
         tipo: "vacinacao",
         animalNome: item.animal?.nome || "Animal",
-        animalId: item.animal?.idanimal,
+        animalId: item.animal?.idanimal ?? 0,
         produtoNome: item.vacina?.produto?.nome || "Vacina",
         dataAgendada: dataAgendada,
         hora: horaStr.substring(0, 5),
         dose: `Dose ${item.dose_numero}${item.protocolo?.total_doses ? '/' + item.protocolo.total_doses : ''}`,
-        urgencia: urgencia as any,
+        urgencia,
         status: item.status === "aplicada" ? "concluido" : "pendente",
         numeroDose: item.dose_numero,
         totalDoses: item.protocolo?.total_doses
       });
-    });
+    }
 
     // Processar Medicações
-    (agendaMed || []).forEach((item: any) => {
+    for (const item of agendaMed ?? []) {
       const horaStr = item.hora || "08:00:00";
       const dataAgendada = `${item.data}T${horaStr}`;
-      
+
       const urgencia = item.status === "aplicada"
         ? "concluido"
         : getUrgencia(new Date(dataAgendada));
@@ -220,16 +208,16 @@ export async function buscarProximosCompromissos(): Promise<
         id: `med-${item.idagendamedicacao}`,
         tipo: "medicacao",
         animalNome: item.animal?.nome || "Animal",
-        animalId: item.animal?.idanimal,
+        animalId: item.animal?.idanimal ?? 0,
         produtoNome: item.medicamento?.produto?.nome || "Medicamento",
         dataAgendada: dataAgendada,
         hora: horaStr.substring(0, 5),
         dose: item.quantidade || `Dose ${item.dose_numero}`,
-        urgencia: urgencia as any,
+        urgencia,
         status: item.status === "aplicada" ? "concluido" : "pendente",
         numeroDose: item.dose_numero,
       });
-    });
+    }
 
     // Ordenar final por data/hora
     compromissos.sort((a, b) => {
@@ -243,30 +231,25 @@ export async function buscarProximosCompromissos(): Promise<
       return dataA - dataB;
     });
 
-    return {
-      success: true,
-      message: `${compromissos.length} compromissos encontrados`,
-      data: compromissos,
-    };
+    return sucesso(compromissos, `${compromissos.length} compromissos encontrados`);
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "buscarProximosCompromissos");
   }
 }
 
-function getUrgencia(dataComp: Date): "hoje" | "amanha" | "semana" | "futuro" {
+function getUrgencia(
+  dataComp: Date
+): "atrasado" | "hoje" | "amanha" | "semana" | "futuro" {
   const agora = new Date();
-  
+
   // Normalizar datas para início do dia (00:00:00) para comparação correta de dias
   const hoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
   const dataItem = new Date(dataComp.getFullYear(), dataComp.getMonth(), dataComp.getDate());
-  
+
   const diffTime = dataItem.getTime() - hoje.getTime();
   const diffDias = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
-  if (diffDias < 0) return "hoje"; // Atrasado considera hoje (urgente)
+  if (diffDias < 0) return "atrasado";
   if (diffDias === 0) return "hoje";
   if (diffDias === 1) return "amanha";
   if (diffDias <= 7) return "semana";

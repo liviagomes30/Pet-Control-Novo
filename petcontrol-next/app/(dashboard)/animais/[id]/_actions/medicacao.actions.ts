@@ -1,15 +1,11 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
 import { medicacaoSchema, MedicacaoFormData } from "../_schemas/medicacao.schema";
 import { revalidatePath } from "next/cache";
-
-type ActionResponse<T = unknown> = {
-  success: boolean;
-  message: string;
-  data?: T;
-  errors?: Record<string, string[]>;
-};
+import { requireUser } from "@/lib/auth/require-user";
+import { falha, invalido, sucesso, type ActionResult } from "@/lib/actions/result";
+import type { Medicacao } from "@/lib/database.types";
+import { hojeLocal } from "@/lib/domain/data-local";
 
 /**
  * Registrar medicação
@@ -17,22 +13,20 @@ type ActionResponse<T = unknown> = {
  * 1. MOVIMENTA estoque (decrementa quantidade)
  * 2. Valida se há estoque suficiente
  * 3. Cria registro no histórico
+ *
+ * Nota: esta operação faz 4 chamadas sequenciais sem transação (herdado).
+ * Uma falha entre elas pode deixar histórico órfão ou estoque não debitado.
+ * Migrar para uma função Postgres é trabalho de Fase 2 (requer acesso ao
+ * projeto Supabase real para escrever a migration).
  */
 export async function registrarMedicacao(
   formData: MedicacaoFormData
-): Promise<ActionResponse> {
+): Promise<ActionResult<Medicacao>> {
   const validacao = medicacaoSchema.safeParse(formData);
-
-  if (!validacao.success) {
-    return {
-      success: false,
-      message: "Dados inválidos",
-      errors: validacao.error.flatten().fieldErrors,
-    };
-  }
+  if (!validacao.success) return invalido(validacao.error);
 
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     // 1. Buscar nome do animal e medicamento
     const [animalRes, medicamentoRes, estoqueRes] = await Promise.all([
@@ -54,7 +48,7 @@ export async function registrarMedicacao(
     ]);
 
     const animal = animalRes.data;
-    const medicamento = medicamentoRes.data as any;
+    const medicamento = medicamentoRes.data as { idproduto: number; produto: { nome: string } | null } | null;
     const estoque = estoqueRes.data;
 
     if (!animal) {
@@ -90,12 +84,7 @@ export async function registrarMedicacao(
       .select()
       .single();
 
-    if (historicoError) {
-      return {
-        success: false,
-        message: `Erro ao criar histórico: ${historicoError.message}`,
-      };
-    }
+    if (historicoError) return falha(historicoError, "registrarMedicacao:historico");
 
     // 5. Inserir medicação vinculada ao histórico
     const { data: novaMedicacao, error: medicacaoError } = await supabase
@@ -111,18 +100,17 @@ export async function registrarMedicacao(
       .select()
       .single();
 
-    if (medicacaoError) {
-      return {
-        success: false,
-        message: `Erro ao registrar medicação: ${medicacaoError.message}`,
-      };
-    }
+    if (medicacaoError) return falha(medicacaoError, "registrarMedicacao:medicacao");
 
     // 5. Atualizar histórico com ID da medicação
-    await supabase
+    const { error: vinculoError } = await supabase
       .from("historico")
       .update({ medicacao_idmedicacao: novaMedicacao.idmedicacao })
       .eq("idhistorico", historico.idhistorico);
+
+    if (vinculoError) {
+      console.error("[registrarMedicacao:vincularHistorico]", vinculoError);
+    }
 
     // 6. DECREMENTAR ESTOQUE
     const novaQuantidade = estoque.quantidade - validacao.data.quantidade_administrada;
@@ -131,42 +119,38 @@ export async function registrarMedicacao(
       .update({ quantidade: novaQuantidade })
       .eq("idproduto", validacao.data.medicamento_idproduto);
 
-    if (estoqueError) {
-      return {
-        success: false,
-        message: `Erro ao atualizar estoque: ${estoqueError.message}`,
-      };
-    }
+    if (estoqueError) return falha(estoqueError, "registrarMedicacao:estoque");
 
     revalidatePath(`/animais/${validacao.data.idanimal}`);
-    return {
-      success: true,
-      message: `Medicação de ${animal.nome} registrada com sucesso! Estoque atualizado.`,
-      data: novaMedicacao,
-    };
+    return sucesso(
+      novaMedicacao,
+      `Medicação de ${animal.nome} registrada com sucesso! Estoque atualizado.`
+    );
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "registrarMedicacao");
   }
 }
+
+export type MedicamentoComEstoque = {
+  idproduto: number;
+  composicao: string;
+  produto: { nome: string; idunidademedida: number } | null;
+  estoque: number;
+};
 
 /**
  * Listar medicamentos disponíveis
  */
-export async function listarMedicamentos(): Promise<ActionResponse> {
+export async function listarMedicamentos(): Promise<ActionResult<MedicamentoComEstoque[]>> {
   try {
-    const supabase = await createClient();
-    
+    const { supabase } = await requireUser();
+
     // Buscar medicamentos com estoque
     const { data: medicamentos, error } = await supabase
       .from("medicamento")
       .select("idproduto, composicao");
 
-    if (error) {
-      return { success: false, message: error.message };
-    }
+    if (error) return falha(error, "listarMedicamentos");
 
     // Buscar dados do produto e estoque para cada medicamento
     const medicamentosComEstoque = await Promise.all(
@@ -197,16 +181,9 @@ export async function listarMedicamentos(): Promise<ActionResponse> {
       (m) => m.produto && m.produto.nome && m.estoque > 0
     );
 
-    return {
-      success: true,
-      message: "Medicamentos carregados",
-      data: medicamentosDisponiveis,
-    };
+    return sucesso(medicamentosDisponiveis, "Medicamentos carregados");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "listarMedicamentos");
   }
 }
 
@@ -215,36 +192,39 @@ export async function listarMedicamentos(): Promise<ActionResponse> {
  */
 export async function listarMedicacoesAdministradasPorReceita(
   idReceita: number
-): Promise<ActionResponse> {
+): Promise<ActionResult<number[]>> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     const { data: medicacoes, error } = await supabase
       .from("medicacao")
       .select("posologia_medicamento_idproduto")
       .eq("posologia_receitamedicamento_idreceita", idReceita);
 
-    if (error) {
-      return { success: false, message: error.message };
-    }
+    if (error) return falha(error, "listarMedicacoesAdministradasPorReceita");
 
     // Retornar apenas os IDs dos medicamentos já administrados
     const idsAdministrados = (medicacoes || []).map(
       (m) => m.posologia_medicamento_idproduto
     );
 
-    return {
-      success: true,
-      message: "Medicações administradas carregadas",
-      data: idsAdministrados,
-    };
+    return sucesso(idsAdministrados, "Medicações administradas carregadas");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "listarMedicacoesAdministradasPorReceita");
   }
 }
+
+// A tabela `agendamedicacao` não está no schema versionado (petcontrol.sql) —
+// ver P0 #3 do relatório de revisão. Tipo local até a migration existir.
+export type AgendamentoMedicacao = {
+  idagendamedicacao: number;
+  animal_idanimal: number;
+  medicamento_idproduto: number;
+  data: string;
+  hora: string | null;
+  status: string;
+  [key: string]: unknown;
+};
 
 /**
  * Buscar agendamento de medicação mais próximo
@@ -252,10 +232,10 @@ export async function listarMedicacoesAdministradasPorReceita(
 export async function buscarAgendamentoMedicacao(
   idAnimal: number,
   idMedicamento: number
-): Promise<ActionResponse> {
+): Promise<ActionResult<AgendamentoMedicacao | null>> {
   try {
-    const supabase = await createClient();
-    const dataFiltro = new Date().toISOString().split("T")[0];
+    const { supabase } = await requireUser();
+    const dataFiltro = hojeLocal();
 
     const { data: agendamento, error } = await supabase
       .from("agendamedicacao")
@@ -269,19 +249,10 @@ export async function buscarAgendamentoMedicacao(
       .limit(1)
       .maybeSingle();
 
-    if (error) {
-      return { success: false, message: error.message };
-    }
+    if (error) return falha(error, "buscarAgendamentoMedicacao");
 
-    return {
-      success: true,
-      message: "Agendamento encontrado",
-      data: agendamento,
-    };
+    return sucesso(agendamento, "Agendamento encontrado");
   } catch (error) {
-    return {
-      success: false,
-      message: "Erro ao buscar agendamento",
-    };
+    return falha(error, "buscarAgendamentoMedicacao");
   }
 }

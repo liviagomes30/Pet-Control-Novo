@@ -1,63 +1,49 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
 import { animalSchema, animalUpdateSchema, AnimalFormData } from "../_schemas/animal.schema";
 import { revalidatePath } from "next/cache";
-
-// Tipo de resposta padronizado para Server Actions
-type ActionResponse<T = unknown> = {
-  success: boolean;
-  message: string;
-  data?: T;
-  errors?: Record<string, string[]>;
-};
+import { requireUser } from "@/lib/auth/require-user";
+import { falha, invalido, sucesso, type ActionResult } from "@/lib/actions/result";
+import type { Animal } from "@/lib/database.types";
 
 /**
  * Buscar todos os animais
  */
-export async function listarAnimais(): Promise<ActionResponse> {
+export async function listarAnimais(): Promise<ActionResult<Animal[]>> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
     const { data, error } = await supabase
       .from("animal")
       .select("*")
       .order("nome", { ascending: true });
 
-    if (error) {
-      return { success: false, message: error.message };
-    }
+    if (error) return falha(error, "listarAnimais");
 
-    return { success: true, message: "Animais carregados", data };
+    return sucesso(data ?? [], "Animais carregados");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "listarAnimais");
   }
 }
 
 /**
  * Buscar animal por ID
  */
-export async function buscarAnimalPorId(id: number): Promise<ActionResponse> {
+export async function buscarAnimalPorId(id: number): Promise<ActionResult<Animal>> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
     const { data, error } = await supabase
       .from("animal")
       .select("*")
       .eq("idanimal", id)
-      .single();
+      .maybeSingle();
 
-    if (error) {
+    if (error || !data) {
       return { success: false, message: "Animal não encontrado" };
     }
 
-    return { success: true, message: "Animal encontrado", data };
+    return sucesso(data, "Animal encontrado");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "buscarAnimalPorId");
   }
 }
 
@@ -68,27 +54,20 @@ export async function buscarAnimalPorId(id: number): Promise<ActionResponse> {
 export async function filtrarAnimais(
   termo: string,
   campo: "nome" | "especie" | "raca"
-): Promise<ActionResponse> {
+): Promise<ActionResult<Animal[]>> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
     const { data, error } = await supabase
       .from("animal")
       .select("*")
       .ilike(campo, `%${termo}%`)
       .order("nome", { ascending: true });
 
-    console.log(`Filtrando animais por ${campo}: ${termo} -> Encontrados: ${data?.length}`);
+    if (error) return falha(error, "filtrarAnimais");
 
-    if (error) {
-      return { success: false, message: error.message };
-    }
-
-    return { success: true, message: "Animais filtrados", data };
+    return sucesso(data ?? [], "Animais filtrados");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "filtrarAnimais");
   }
 }
 
@@ -98,20 +77,12 @@ export async function filtrarAnimais(
  */
 export async function criarAnimal(
   formData: AnimalFormData
-): Promise<ActionResponse> {
-  // Validação com Zod
+): Promise<ActionResult<Animal>> {
   const validacao = animalSchema.safeParse(formData);
-
-  if (!validacao.success) {
-    return {
-      success: false,
-      message: "Dados inválidos",
-      errors: validacao.error.flatten().fieldErrors,
-    };
-  }
+  if (!validacao.success) return invalido(validacao.error);
 
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
     const { data, error } = await supabase
       .from("animal")
       .insert({
@@ -130,17 +101,12 @@ export async function criarAnimal(
       .select()
       .single();
 
-    if (error) {
-      return { success: false, message: `Erro ao criar animal: ${error.message}` };
-    }
+    if (error) return falha(error, "criarAnimal");
 
     revalidatePath("/animais");
-    return { success: true, message: "Animal cadastrado com sucesso!", data };
+    return sucesso(data, "Animal cadastrado com sucesso!");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "criarAnimal");
   }
 }
 
@@ -151,48 +117,36 @@ export async function criarAnimal(
 export async function atualizarAnimal(
   id: number,
   formData: Partial<AnimalFormData>
-): Promise<ActionResponse> {
+): Promise<ActionResult> {
   const validacao = animalUpdateSchema.safeParse({ ...formData, idanimal: id });
-
-  if (!validacao.success) {
-    return {
-      success: false,
-      message: "Dados inválidos",
-      errors: validacao.error.flatten().fieldErrors,
-    };
-  }
+  if (!validacao.success) return invalido(validacao.error);
 
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
     const { error } = await supabase
       .from("animal")
       .update({
-        nome: formData.nome,
-        especie: formData.especie,
-        sexo: formData.sexo,
-        datanascimento: formData.datanascimento,
-        dataresgate: formData.dataresgate,
-        raca: formData.raca,
-        porte: formData.porte,
-        status: formData.status,
-        foto: formData.foto,
-        castrado: formData.castrado,
-        cor: formData.cor,
+        nome: validacao.data.nome,
+        especie: validacao.data.especie,
+        sexo: validacao.data.sexo,
+        datanascimento: validacao.data.datanascimento,
+        dataresgate: validacao.data.dataresgate,
+        raca: validacao.data.raca,
+        porte: validacao.data.porte,
+        status: validacao.data.status,
+        foto: validacao.data.foto,
+        castrado: validacao.data.castrado,
+        cor: validacao.data.cor,
       })
       .eq("idanimal", id);
 
-    if (error) {
-      return { success: false, message: `Erro ao atualizar: ${error.message}` };
-    }
+    if (error) return falha(error, "atualizarAnimal");
 
     revalidatePath("/animais");
     revalidatePath(`/animais/${id}`);
-    return { success: true, message: "Animal atualizado com sucesso!" };
+    return sucesso(undefined, "Animal atualizado com sucesso!");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "atualizarAnimal");
   }
 }
 
@@ -201,9 +155,9 @@ export async function atualizarAnimal(
  * Substitui o método apagarAnimal do AnimalService.java
  * Verifica dependências antes de deletar (mesmas regras do Java)
  */
-export async function deletarAnimal(id: number): Promise<ActionResponse> {
+export async function deletarAnimal(id: number): Promise<ActionResult> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     // Verificar dependências (traduzido do AnimalService.java)
     const verificacoes = [
@@ -216,31 +170,29 @@ export async function deletarAnimal(id: number): Promise<ActionResponse> {
       { tabela: "vacinacao", campo: "idanimal", erro: "Animal possui vacinações registradas" },
     ];
 
-    for (const verificacao of verificacoes) {
-      const { data } = await supabase
-        .from(verificacao.tabela)
-        .select("*")
-        .eq(verificacao.campo, id)
-        .limit(1);
+    const resultados = await Promise.all(
+      verificacoes.map((verificacao) =>
+        supabase
+          .from(verificacao.tabela)
+          .select("*", { count: "exact", head: true })
+          .eq(verificacao.campo, id),
+      ),
+    );
 
-      if (data && data.length > 0) {
-        return { success: false, message: verificacao.erro };
-      }
+    const dependenciaEncontrada = resultados.findIndex(
+      (resultado) => (resultado.count ?? 0) > 0,
+    );
+    if (dependenciaEncontrada !== -1) {
+      return { success: false, message: verificacoes[dependenciaEncontrada].erro };
     }
 
-    // Se passou em todas verificações, deletar
     const { error } = await supabase.from("animal").delete().eq("idanimal", id);
 
-    if (error) {
-      return { success: false, message: `Erro ao deletar: ${error.message}` };
-    }
+    if (error) return falha(error, "deletarAnimal");
 
     revalidatePath("/animais");
-    return { success: true, message: "Animal removido com sucesso!" };
+    return sucesso(undefined, "Animal removido com sucesso!");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "deletarAnimal");
   }
 }

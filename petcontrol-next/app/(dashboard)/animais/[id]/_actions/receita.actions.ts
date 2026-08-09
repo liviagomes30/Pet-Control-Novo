@@ -1,34 +1,22 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
 import { receitaSchema, ReceitaFormData } from "../_schemas/receita.schema";
 import { revalidatePath } from "next/cache";
-
-type ActionResponse<T = unknown> = {
-  success: boolean;
-  message: string;
-  data?: T;
-  errors?: Record<string, string[]>;
-};
+import { requireUser } from "@/lib/auth/require-user";
+import { falha, invalido, sucesso, type ActionResult } from "@/lib/actions/result";
+import type { ReceitaMedicamento } from "@/lib/database.types";
 
 /**
  * Criar receita médica com posologias
  */
 export async function criarReceita(
   formData: ReceitaFormData
-): Promise<ActionResponse> {
+): Promise<ActionResult<ReceitaMedicamento>> {
   const validacao = receitaSchema.safeParse(formData);
-
-  if (!validacao.success) {
-    return {
-      success: false,
-      message: "Dados inválidos",
-      errors: validacao.error.flatten().fieldErrors,
-    };
-  }
+  if (!validacao.success) return invalido(validacao.error);
 
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     // 1. Criar receita
     const { data: receita, error: receitaError } = await supabase
@@ -43,17 +31,12 @@ export async function criarReceita(
       .select()
       .single();
 
-    if (receitaError) {
-      return {
-        success: false,
-        message: `Erro ao criar receita: ${receitaError.message}`,
-      };
-    }
+    if (receitaError) return falha(receitaError, "criarReceita:receita");
 
     // 2. Criar posologias para cada medicamento
     for (const med of validacao.data.medicamentos) {
       // Inserir posologia
-      const { data: novaPosologia, error: posologiaError } = await supabase
+      const { error: posologiaError } = await supabase
         .from("posologia")
         .insert({
           dose: med.dose,
@@ -68,12 +51,7 @@ export async function criarReceita(
         .select()
         .single();
 
-      if (posologiaError) {
-        return {
-          success: false,
-          message: `Erro ao criar posologia: ${posologiaError.message}`,
-        };
-      }
+      if (posologiaError) return falha(posologiaError, "criarReceita:posologia");
 
       // --- PROCESSAR DOSES CUSTOMIZADAS (ESQUEMA ESPECIAL) ---
       if (med.tipo_posologia === "especial" && med.doses_customizadas && med.doses_customizadas.length > 0) {
@@ -91,13 +69,7 @@ export async function criarReceita(
           .from("posologia_customizada")
           .insert(dosesParaInserir);
 
-        if (dosesError) {
-          console.error("Erro ao inserir doses customizadas:", dosesError);
-          return {
-            success: false,
-            message: `Erro ao criar doses customizadas: ${dosesError.message}`,
-          };
-        }
+        if (dosesError) return falha(dosesError, "criarReceita:dosesCustomizadas");
 
         // Criar agendamentos automáticos para cada dose customizada
         const agendamentosCustomizados = med.doses_customizadas.map((dose, index) => ({
@@ -202,27 +174,33 @@ export async function criarReceita(
 
     revalidatePath(`/animais/${validacao.data.idanimal}`);
     revalidatePath("/agenda");
-    return {
-      success: true,
-      message: "Receita criada com sucesso!",
-      data: receita,
-    };
+    return sucesso(receita, "Receita criada com sucesso!");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "criarReceita");
   }
 }
+
+export type PosologiaComProduto = {
+  medicamento_idproduto: number;
+  dose: string;
+  quantidadedias: number | null;
+  intervalohoras: number | null;
+  frequencia_diaria: number | null;
+  produto?: string;
+};
+
+export type ReceitaComPosologias = ReceitaMedicamento & {
+  posologias: PosologiaComProduto[];
+};
 
 /**
  * Listar receitas de um animal
  */
 export async function listarReceitasPorAnimal(
   idAnimal: number
-): Promise<ActionResponse> {
+): Promise<ActionResult<ReceitaComPosologias[]>> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     const { data: receitas, error } = await supabase
       .from("receitamedicamento")
@@ -230,9 +208,7 @@ export async function listarReceitasPorAnimal(
       .eq("animal_idanimal", idAnimal)
       .order("data", { ascending: false });
 
-    if (error) {
-      return { success: false, message: error.message };
-    }
+    if (error) return falha(error, "listarReceitasPorAnimal");
 
     // Buscar posologias para cada receita
     const receitasComPosologias = await Promise.all(
@@ -268,16 +244,9 @@ export async function listarReceitasPorAnimal(
       })
     );
 
-    return {
-      success: true,
-      message: "Receitas carregadas",
-      data: receitasComPosologias,
-    };
+    return sucesso(receitasComPosologias, "Receitas carregadas");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "listarReceitasPorAnimal");
   }
 }
 
@@ -286,26 +255,21 @@ export async function listarReceitasPorAnimal(
  */
 export async function marcarReceitaConcluida(
   idReceita: number
-): Promise<ActionResponse> {
+): Promise<ActionResult> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     const { error } = await supabase
       .from("receitamedicamento")
       .update({ status: "Concluída" })
       .eq("idreceita", idReceita);
 
-    if (error) {
-      return { success: false, message: error.message };
-    }
+    if (error) return falha(error, "marcarReceitaConcluida");
 
     revalidatePath("/agenda");
-    return { success: true, message: "Receita marcada como concluída" };
+    return sucesso(undefined, "Receita marcada como concluída");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "marcarReceitaConcluida");
   }
 }
 
@@ -315,9 +279,9 @@ export async function marcarReceitaConcluida(
  */
 export async function excluirReceita(
   idReceita: number
-): Promise<ActionResponse> {
+): Promise<ActionResult> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     // 1. Verificar se há medicações administradas
     const { data: medicacoes } = await supabase
@@ -338,9 +302,7 @@ export async function excluirReceita(
       .delete()
       .eq("receitamedicamento_idreceita", idReceita);
 
-    if (posologiaError) {
-      return { success: false, message: `Erro ao excluir posologias: ${posologiaError.message}` };
-    }
+    if (posologiaError) return falha(posologiaError, "excluirReceita:posologia");
 
     // 3. Excluir a receita
     const { error: receitaError } = await supabase
@@ -348,18 +310,13 @@ export async function excluirReceita(
       .delete()
       .eq("idreceita", idReceita);
 
-    if (receitaError) {
-      return { success: false, message: `Erro ao excluir receita: ${receitaError.message}` };
-    }
+    if (receitaError) return falha(receitaError, "excluirReceita:receita");
 
     revalidatePath("/agenda");
     revalidatePath("/animais");
-    return { success: true, message: "Receita excluída com sucesso" };
+    return sucesso(undefined, "Receita excluída com sucesso");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "excluirReceita");
   }
 }
 
@@ -368,35 +325,29 @@ export async function excluirReceita(
  * Mantém a receita e histórico de doses já administradas, mas impede novas doses
  */
 export async function suspenderReceita(
-  idReceita: number,
-  motivo?: string
-): Promise<ActionResponse> {
+  idReceita: number
+): Promise<ActionResult> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     // 1. Atualizar status da receita para Suspensa
     const { error } = await supabase
       .from("receitamedicamento")
-      .update({ 
+      .update({
         status: "Suspensa"
       })
       .eq("idreceita", idReceita);
 
-    if (error) {
-      return { success: false, message: error.message };
-    }
+    if (error) return falha(error, "suspenderReceita");
 
     revalidatePath("/agenda");
     revalidatePath("/animais");
-    return { 
-      success: true, 
-      message: "Receita suspensa. O histórico de doses administradas foi mantido." 
-    };
+    return sucesso(
+      undefined,
+      "Receita suspensa. O histórico de doses administradas foi mantido."
+    );
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "suspenderReceita");
   }
 }
 
@@ -405,31 +356,26 @@ export async function suspenderReceita(
  */
 export async function verificarPodeExcluir(
   idReceita: number
-): Promise<ActionResponse<{ podeExcluir: boolean; dosesAdministradas: number }>> {
+): Promise<ActionResult<{ podeExcluir: boolean; dosesAdministradas: number }>> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
-    const { data: medicacoes } = await supabase
+    const { data: medicacoes, error } = await supabase
       .from("medicacao")
       .select("idmedicacao")
       .eq("posologia_receitamedicamento_idreceita", idReceita);
 
+    if (error) return falha(error, "verificarPodeExcluir");
+
     const dosesAdministradas = medicacoes?.length || 0;
 
-    return {
-      success: true,
-      message: dosesAdministradas > 0 
+    return sucesso(
+      { podeExcluir: dosesAdministradas === 0, dosesAdministradas },
+      dosesAdministradas > 0
         ? `${dosesAdministradas} dose(s) já administrada(s)`
-        : "Nenhuma dose administrada",
-      data: {
-        podeExcluir: dosesAdministradas === 0,
-        dosesAdministradas,
-      },
-    };
+        : "Nenhuma dose administrada"
+    );
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "verificarPodeExcluir");
   }
 }

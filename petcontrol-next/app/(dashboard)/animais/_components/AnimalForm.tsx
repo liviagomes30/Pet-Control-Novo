@@ -39,7 +39,7 @@ export function AnimalForm({ animal, isEditing = false }: AnimalFormProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  const form = useForm<AnimalFormData>({
+  const form = useForm({
     resolver: zodResolver(animalSchema),
     defaultValues: {
       nome: animal?.nome || "",
@@ -61,7 +61,7 @@ export function AnimalForm({ animal, isEditing = false }: AnimalFormProps) {
     onSuccess: (response) => {
       if (response.success) {
         toast.success(response.message);
-        queryClient.invalidateQueries({ queryKey: ["animais"] });
+        void queryClient.invalidateQueries({ queryKey: ["animais"] });
         router.push("/animais");
       } else {
         toast.error(response.message);
@@ -85,7 +85,7 @@ export function AnimalForm({ animal, isEditing = false }: AnimalFormProps) {
     onSuccess: (response) => {
       if (response.success) {
         toast.success(response.message);
-        queryClient.invalidateQueries({ queryKey: ["animais"] });
+        void queryClient.invalidateQueries({ queryKey: ["animais"] });
         router.push("/animais");
       } else {
         toast.error(response.message);

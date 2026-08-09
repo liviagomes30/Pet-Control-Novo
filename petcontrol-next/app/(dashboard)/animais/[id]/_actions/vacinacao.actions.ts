@@ -1,6 +1,5 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
 import {
   protocoloVacinalSchema,
   ProtocoloVacinalFormData,
@@ -8,12 +7,26 @@ import {
   VacinacaoAplicadaFormData,
 } from "../_schemas/vacinacao.schema";
 import { revalidatePath } from "next/cache";
+import { requireUser } from "@/lib/auth/require-user";
+import { falha, invalido, sucesso, type ActionResult } from "@/lib/actions/result";
+import { dataParaISOLocal } from "@/lib/domain/data-local";
 
-type ActionResponse<T = unknown> = {
-  success: boolean;
-  message: string;
-  data?: T;
-  errors?: Record<string, string[]>;
+// As tabelas `protocolo_vacinal` e `agendavacinacao` (colunas hora/status/
+// dose_numero) não estão no schema versionado — ver P0 #3 do relatório de
+// revisão. Tipo local até a migration existir.
+export type ProtocoloVacinal = {
+  idprotocolo: number;
+  animal_idanimal: number;
+  vacina_idproduto: number;
+  tipo_protocolo: string;
+  total_doses: number;
+  intervalo_dias: number | null;
+  data_inicio: string;
+  data_proximo_reforco: string | null;
+  doses_aplicadas: number;
+  status: string;
+  observacoes: string | null | undefined;
+  [key: string]: unknown;
 };
 
 /**
@@ -21,19 +34,12 @@ type ActionResponse<T = unknown> = {
  */
 export async function criarProtocoloVacinal(
   formData: ProtocoloVacinalFormData
-): Promise<ActionResponse> {
+): Promise<ActionResult<ProtocoloVacinal>> {
   const validacao = protocoloVacinalSchema.safeParse(formData);
-
-  if (!validacao.success) {
-    return {
-      success: false,
-      message: "Dados inválidos",
-      errors: validacao.error.flatten().fieldErrors,
-    };
-  }
+  if (!validacao.success) return invalido(validacao.error);
 
   try {
-    const supabase = await createClient();
+    const { supabase, user } = await requireUser();
 
     // Definir intervalo padrão baseado no tipo
     let intervaloDias = validacao.data.intervalo_dias;
@@ -77,13 +83,8 @@ export async function criarProtocoloVacinal(
       .select()
       .single();
 
-    if (error) {
-      return { success: false, message: `Erro: ${error.message}` };
-    }
+    if (error) return falha(error, "criarProtocoloVacinal");
 
-    // Pegar usuário logado
-    const { data: { user } } = await supabase.auth.getUser();
-    
     // Buscar idpessoa do usuário logado (assumindo tabela usuario vinculada ao auth.users ou similar)
     // Se não tiver auth configurado ainda, usar um ID padrão ou buscar da tabela usuario pelo email
     // Como fallback rápido, vamos buscar o primeiro usuário do sistema se não tiver auth user
@@ -157,19 +158,17 @@ export async function criarProtocoloVacinal(
 
     revalidatePath(`/animais/${validacao.data.idanimal}`);
     revalidatePath("/agenda");
-    
-    return {
-      success: true,
-      message: "Protocolo vacinal criado com sucesso!",
-      data: protocolo,
-    };
+
+    return sucesso(protocolo, "Protocolo vacinal criado com sucesso!");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "criarProtocoloVacinal");
   }
 }
+
+export type VacinacaoComRelacoes = {
+  idvacinacao: number;
+  [key: string]: unknown;
+};
 
 /**
  * Registrar vacinação aplicada
@@ -177,19 +176,12 @@ export async function criarProtocoloVacinal(
  */
 export async function registrarVacinacao(
   formData: VacinacaoAplicadaFormData
-): Promise<ActionResponse> {
+): Promise<ActionResult<VacinacaoComRelacoes>> {
   const validacao = vacinacaoAplicadaSchema.safeParse(formData);
-
-  if (!validacao.success) {
-    return {
-      success: false,
-      message: "Dados inválidos",
-      errors: validacao.error.flatten().fieldErrors,
-    };
-  }
+  if (!validacao.success) return invalido(validacao.error);
 
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     // Buscar dados para descrição
     const { data: vacina } = await supabase
@@ -228,9 +220,7 @@ export async function registrarVacinacao(
       .select()
       .single();
 
-    if (historicoError) {
-      return { success: false, message: `Erro: ${historicoError.message}` };
-    }
+    if (historicoError) return falha(historicoError, "registrarVacinacao:historico");
 
     // 2. Inserir vacinação
     const { data: novaVacinacao, error: vacinacaoError } = await supabase
@@ -250,15 +240,17 @@ export async function registrarVacinacao(
       .select()
       .single();
 
-    if (vacinacaoError) {
-      return { success: false, message: `Erro: ${vacinacaoError.message}` };
-    }
+    if (vacinacaoError) return falha(vacinacaoError, "registrarVacinacao:vacinacao");
 
     // 3. Atualizar histórico com ID da vacinação
-    await supabase
+    const { error: vinculoError } = await supabase
       .from("historico")
       .update({ vacinacao_idvacinacao: novaVacinacao.idvacinacao })
       .eq("idhistorico", historico.idhistorico);
+
+    if (vinculoError) {
+      console.error("[registrarVacinacao:vincularHistorico]", vinculoError);
+    }
 
     // 4. Se vinculada a protocolo, atualizar contador
     if (validacao.data.protocolo_idprotocolo) {
@@ -273,19 +265,18 @@ export async function registrarVacinacao(
         const protocoloConcluido = novasDosesAplicadas >= (protocolo.total_doses || 1);
 
         // Calcular próximo reforço
-        let dataProximoReforco = null;
+        let dataProximoReforco: string | undefined;
         if (!protocoloConcluido && protocolo.intervalo_dias) {
-          dataProximoReforco = new Date();
-          dataProximoReforco.setDate(
-            dataProximoReforco.getDate() + protocolo.intervalo_dias
-          );
+          const base = new Date();
+          base.setDate(base.getDate() + protocolo.intervalo_dias);
+          dataProximoReforco = dataParaISOLocal(base);
         }
 
         await supabase
           .from("protocolo_vacinal")
           .update({
             doses_aplicadas: novasDosesAplicadas,
-            data_proximo_reforco: dataProximoReforco?.toISOString().split("T")[0],
+            data_proximo_reforco: dataProximoReforco,
             status: protocoloConcluido ? "concluido" : "ativo",
           })
           .eq("idprotocolo", validacao.data.protocolo_idprotocolo);
@@ -320,9 +311,9 @@ export async function registrarVacinacao(
 
       // Se NÃO for recorrente (ex: protocolo inicial com multidoses começando hoje),
       // precisamos vincular a vacina atual como sendo a primeira dose.
-      if (!isRecorrente && respProtocolo.success && respProtocolo.data) {
-        const novoProtocolo = respProtocolo.data as any;
-        
+      if (!isRecorrente && respProtocolo.success) {
+        const novoProtocolo = respProtocolo.data;
+
         // A. Vincular vacinação ao protocolo novo
         await supabase
           .from("vacinacao")
@@ -347,33 +338,31 @@ export async function registrarVacinacao(
     revalidatePath(`/animais/${validacao.data.idanimal}`);
     revalidatePath("/agenda");
 
-    return {
-      success: true,
-      message: `Vacinação registrada com sucesso! (${nomeVacina})`,
-      data: novaVacinacao,
-    };
+    return sucesso(novaVacinacao, `Vacinação registrada com sucesso! (${nomeVacina})`);
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "registrarVacinacao");
   }
 }
+
+export type VacinaComProduto = {
+  idproduto: number;
+  lote: string | null;
+  validade: string | null;
+  produto: { nome: string } | null;
+};
 
 /**
  * Listar vacinas disponíveis
  */
-export async function listarVacinas(): Promise<ActionResponse> {
+export async function listarVacinas(): Promise<ActionResult<VacinaComProduto[]>> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     const { data: vacinas, error } = await supabase
       .from("vacina")
       .select("idproduto, lote, validade");
 
-    if (error) {
-      return { success: false, message: error.message };
-    }
+    if (error) return falha(error, "listarVacinas");
 
     // Buscar nomes dos produtos
     const vacinasComNomes = await Promise.all(
@@ -391,27 +380,25 @@ export async function listarVacinas(): Promise<ActionResponse> {
       })
     );
 
-    return {
-      success: true,
-      message: "Vacinas carregadas",
-      data: vacinasComNomes.filter((v) => v.produto),
-    };
+    return sucesso(
+      vacinasComNomes.filter((v) => v.produto),
+      "Vacinas carregadas"
+    );
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "listarVacinas");
   }
 }
+
+export type ProtocoloComNomeVacina = ProtocoloVacinal & { vacina_nome: string };
 
 /**
  * Listar protocolos ativos de um animal
  */
 export async function listarProtocolosAnimal(
   idAnimal: number
-): Promise<ActionResponse> {
+): Promise<ActionResult<ProtocoloComNomeVacina[]>> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     const { data: protocolos, error } = await supabase
       .from("protocolo_vacinal")
@@ -419,9 +406,7 @@ export async function listarProtocolosAnimal(
       .eq("animal_idanimal", idAnimal)
       .order("data_inicio", { ascending: false });
 
-    if (error) {
-      return { success: false, message: error.message };
-    }
+    if (error) return falha(error, "listarProtocolosAnimal");
 
     // Buscar nomes das vacinas
     const protocolosComNomes = await Promise.all(
@@ -439,15 +424,8 @@ export async function listarProtocolosAnimal(
       })
     );
 
-    return {
-      success: true,
-      message: "Protocolos carregados",
-      data: protocolosComNomes,
-    };
+    return sucesso(protocolosComNomes, "Protocolos carregados");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "listarProtocolosAnimal");
   }
 }

@@ -10,7 +10,9 @@ import {
   TipoPosologia,
 } from "../_schemas/receita.schema";
 import { criarReceita } from "../_actions/receita.actions";
-import { listarMedicamentos } from "../_actions/medicacao.actions";
+import { listarMedicamentos, type MedicamentoComEstoque } from "../_actions/medicacao.actions";
+import { hojeLocal } from "@/lib/domain/data-local";
+import type { Control } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -38,12 +40,7 @@ interface ReceitaFormProps {
   onSuccess?: () => void;
 }
 
-interface Medicamento {
-  idproduto: number;
-  composicao: string;
-  produto: { nome: string };
-  estoque: number;
-}
+type Medicamento = MedicamentoComEstoque;
 
 // Componente para campos condicionais de cada medicamento
 function MedicamentoFields({
@@ -54,7 +51,7 @@ function MedicamentoFields({
   canRemove,
 }: {
   index: number;
-  control: any;
+  control: Control<ReceitaFormData>;
   remove: (index: number) => void;
   medicamentos: Medicamento[];
   canRemove: boolean;
@@ -64,11 +61,16 @@ function MedicamentoFields({
     name: `medicamentos.${index}.tipo_posologia`,
   }) as TipoPosologia;
 
+  // Hook no topo — nunca dentro de callback (Rules of Hooks).
+  const idProdutoSelecionado = useWatch({
+    control,
+    name: `medicamentos.${index}.idproduto`,
+  });
+
   // Definir quais campos mostrar baseado no tipo
   const showIntervaloHoras = ["padrao", "continuo", "se_necessario"].includes(tipoPosologia);
   const showIntervaloDias = tipoPosologia === "periodico";
   const showQuantidadeDias = ["padrao", "periodico"].includes(tipoPosologia);
-  const showFrequenciaDiaria = tipoPosologia === "padrao";
   const showObservacoes = ["se_necessario", "continuo"].includes(tipoPosologia);
   const obsObrigatoria = tipoPosologia === "se_necessario";
   const showDosesCustomizadas = tipoPosologia === "especial";
@@ -144,7 +146,7 @@ function MedicamentoFields({
                       key={med.idproduto}
                       value={med.idproduto.toString()}
                     >
-                      {med.produto.nome}
+                      {med.produto?.nome ?? "Produto"}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -307,18 +309,15 @@ function MedicamentoFields({
             name={`medicamentos.${index}.doses_customizadas`}
             render={({ field }) => {
               const medicamentoSelecionado = medicamentos.find(
-                m => m.idproduto === useWatch({
-                  control,
-                  name: `medicamentos.${index}.idproduto`,
-                })
+                m => m.idproduto === idProdutoSelecionado
               );
-              
+
               return (
                 <FormItem className="md:col-span-2">
                   <DosesCustomizadasInput
                     value={field.value || []}
                     onChange={field.onChange}
-                    medicamento={medicamentoSelecionado?.produto.nome}
+                    medicamento={medicamentoSelecionado?.produto?.nome}
                   />
                   <FormMessage />
                 </FormItem>
@@ -350,7 +349,7 @@ export function ReceitaForm({ idAnimal, onSuccess }: ReceitaFormProps) {
     resolver: zodResolver(receitaSchema),
     defaultValues: {
       idanimal: idAnimal,
-      data: new Date().toISOString().split("T")[0],
+      data: hojeLocal(),
       medico: "",
       clinica: "",
       medicamentos: [defaultMedicamento],
@@ -366,11 +365,11 @@ export function ReceitaForm({ idAnimal, onSuccess }: ReceitaFormProps) {
     async function carregarMedicamentos() {
       const response = await listarMedicamentos();
       if (response.success) {
-        setMedicamentos(response.data as Medicamento[]);
+        setMedicamentos(response.data);
       }
       setLoading(false);
     }
-    carregarMedicamentos();
+    void carregarMedicamentos();
   }, []);
 
   async function onSubmit(data: ReceitaFormData) {
@@ -385,7 +384,7 @@ export function ReceitaForm({ idAnimal, onSuccess }: ReceitaFormProps) {
       } else {
         toast.error(response.message);
       }
-    } catch (error) {
+    } catch {
       toast.error("Erro ao criar receita");
     } finally {
       setIsSubmitting(false);

@@ -79,7 +79,7 @@ export function AnimalList({ initialData }: AnimalListProps) {
     onSuccess: (response) => {
       if (response.success) {
         toast.success(response.message);
-        queryClient.invalidateQueries({ queryKey: ["animais"] });
+        void queryClient.invalidateQueries({ queryKey: ["animais"] });
       } else {
         toast.error(response.message);
       }

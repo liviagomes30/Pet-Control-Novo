@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Plus, X, Calendar, Clock } from "lucide-react";
+import { Plus, X, Calendar } from "lucide-react";
 import { DoseCustomizada } from "../_schemas/receita.schema";
+import { dataParaISOLocal } from "@/lib/domain/data-local";
 
 interface DosesCustomizadasInputProps {
   value: DoseCustomizada[];
@@ -13,17 +13,26 @@ interface DosesCustomizadasInputProps {
   medicamento?: string;
 }
 
+// Chave estável por dose, atribuída na criação (nunca durante a renderização
+// — ler/escrever ref.current no render é proibido pelas Rules of Hooks).
+// A lista é reordenada por data a cada render, e `atualizarDose` muta o
+// objeto em vez de recriá-lo, então o campo `__id` sobrevive às edições.
+type DoseComId = DoseCustomizada & { __id: number };
+
 export function DosesCustomizadasInput({
   value = [],
   onChange,
   medicamento,
 }: DosesCustomizadasInputProps) {
+  const proximoId = useRef(0);
+
   const adicionarDose = () => {
-    const novaDose: DoseCustomizada = {
-      data_programada: new Date().toISOString().split("T")[0],
+    const novaDose: DoseComId = {
+      data_programada: dataParaISOLocal(new Date()),
       horario: "08:00",
       quantidade: 1,
       observacao: "",
+      __id: proximoId.current++,
     };
     onChange([...value, novaDose]);
   };
@@ -32,49 +41,58 @@ export function DosesCustomizadasInput({
     onChange(value.filter((_, i) => i !== index));
   };
 
-  const atualizarDose = (index: number, campo: keyof DoseCustomizada, valor: any) => {
+  const atualizarDose = (
+    index: number,
+    campo: keyof DoseCustomizada,
+    valor: string | number
+  ) => {
     const novasDoses = [...value];
-    novasDoses[index] = { ...novasDoses[index], [campo]: valor };
+    // Mutação no objeto existente (não um novo objeto) para preservar a
+    // identidade usada como chave React — troca por `{...}` faria o campo
+    // de texto perder o foco a cada tecla digitada.
+    Object.assign(novasDoses[index], { [campo]: valor });
     onChange(novasDoses);
   };
 
   const adicionarProximos3Dias = () => {
     const hoje = new Date();
     const novasDoses: DoseCustomizada[] = [];
-    
+
     for (let i = 0; i < 3; i++) {
       const data = new Date(hoje);
       data.setDate(data.getDate() + i);
       novasDoses.push({
-        data_programada: data.toISOString().split("T")[0],
+        data_programada: dataParaISOLocal(data),
         horario: "08:00",
         quantidade: 1,
         observacao: "",
-      });
+        __id: proximoId.current++,
+      } as DoseComId);
     }
-    
+
     onChange([...value, ...novasDoses]);
   };
 
   const adicionarSemanal4Semanas = () => {
     const hoje = new Date();
     const novasDoses: DoseCustomizada[] = [];
-    
+
     for (let i = 0; i < 4; i++) {
       const data = new Date(hoje);
       data.setDate(data.getDate() + (i * 7));
       novasDoses.push({
-        data_programada: data.toISOString().split("T")[0],
+        data_programada: dataParaISOLocal(data),
         horario: "08:00",
         quantidade: 1,
         observacao: `Semana ${i + 1}`,
-      });
+        __id: proximoId.current++,
+      } as DoseComId);
     }
-    
+
     onChange([...value, ...novasDoses]);
   };
 
-  // Ordenar doses por data e horário
+  // Ordenar doses por data e horário (só para exibição — `value` mantém a ordem de inserção)
   const dosesOrdenadas = [...value].sort((a, b) => {
     const dataA = new Date(`${a.data_programada}T${a.horario}`);
     const dataB = new Date(`${b.data_programada}T${b.horario}`);
@@ -134,11 +152,11 @@ export function DosesCustomizadasInput({
         </div>
       ) : (
         <div className="space-y-2">
-          {dosesOrdenadas.map((dose, index) => {
+          {dosesOrdenadas.map((dose) => {
             const originalIndex = value.findIndex(d => d === dose);
             return (
               <div
-                key={originalIndex}
+                key={(dose as DoseComId).__id}
                 className="grid grid-cols-12 gap-2 items-start p-3 bg-gray-50 rounded-lg border border-gray-200"
               >
                 {/* Data */}

@@ -50,7 +50,8 @@ export default async function EditarAnimalPage({ params }: EditarAnimalPageProps
   }
 
   // Buscar histórico
-  const { data: historico } = await listarHistoricoPorAnimal(id);
+  const historicoRes = await listarHistoricoPorAnimal(id);
+  const historico = historicoRes.success ? historicoRes.data : [];
 
   const getStatusBadge = (status: string | null) => {
     const statusColors: Record<string, string> = {
@@ -150,7 +151,7 @@ export default async function EditarAnimalPage({ params }: EditarAnimalPageProps
 
         <TabsContent value="historico" className="mt-6">
           <div className="bg-white rounded-lg border p-6">
-            <HistoricoTimeline items={historico || []} />
+            <HistoricoTimeline items={historico} />
           </div>
         </TabsContent>
 
@@ -173,10 +174,15 @@ export default async function EditarAnimalPage({ params }: EditarAnimalPageProps
           </div>
         </TabsContent>
 
-        <TabsContent value="vacinacao" className="mt-6">
+        <TabsContent value="vacinacao" className="mt-6 space-y-6">
           <div className="bg-white rounded-lg border p-6">
             <h2 className="text-xl font-bold mb-4">Registrar Vacinação</h2>
             <VacinacaoForm idAnimal={id} />
+          </div>
+
+          <div className="bg-white rounded-lg border p-6">
+            <h2 className="text-xl font-bold mb-4">Criar Protocolo Vacinal</h2>
+            <ProtocoloVacinalForm idAnimal={id} />
           </div>
         </TabsContent>
 

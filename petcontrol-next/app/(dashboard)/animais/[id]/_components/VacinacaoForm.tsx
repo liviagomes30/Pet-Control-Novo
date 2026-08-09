@@ -6,14 +6,17 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import {
   vacinacaoAplicadaSchema,
   ORIGENS_VACINACAO,
-  OrigemVacinacao,
   TIPOS_PROTOCOLO_VACINAL,
+  type VacinacaoAplicadaFormData,
 } from "../_schemas/vacinacao.schema";
 import {
   registrarVacinacao,
   listarVacinas,
   listarProtocolosAnimal,
+  type VacinaComProduto,
+  type ProtocoloComNomeVacina,
 } from "../_actions/vacinacao.actions";
+import { hojeLocal } from "@/lib/domain/data-local";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -33,30 +36,15 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { toast } from "sonner";
-import { Loader2, Syringe, Info, ExternalLink, CalendarPlus, TriangleAlert } from "lucide-react";
+import { Loader2, Syringe, TriangleAlert } from "lucide-react";
 
 interface VacinacaoFormProps {
   idAnimal: number;
   onSuccess?: () => void;
 }
 
-interface Vacina {
-  idproduto: number;
-  lote: string;
-  validade: string;
-  produto: { nome: string };
-}
-
-interface Protocolo {
-  idprotocolo: number;
-  vacina_idproduto: number;
-  vacina_nome: string;
-  tipo_protocolo: string;
-  doses_aplicadas: number;
-  total_doses: number;
-  status: string;
-  data_proximo_reforco?: string;
-}
+type Vacina = VacinaComProduto;
+type Protocolo = ProtocoloComNomeVacina;
 
 export function VacinacaoForm({ idAnimal, onSuccess }: VacinacaoFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -64,7 +52,7 @@ export function VacinacaoForm({ idAnimal, onSuccess }: VacinacaoFormProps) {
   const [protocolos, setProtocolos] = useState<Protocolo[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const form = useForm({
+  const form = useForm<VacinacaoAplicadaFormData>({
     resolver: zodResolver(vacinacaoAplicadaSchema),
     defaultValues: {
       idanimal: idAnimal,
@@ -73,7 +61,7 @@ export function VacinacaoForm({ idAnimal, onSuccess }: VacinacaoFormProps) {
       dose_numero: 1,
       local: "ONG SalvaCão",
       origem: "ong",
-      data: new Date().toISOString().split("T")[0],
+      data: hojeLocal(),
       hora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
       observacoes: "",
       criar_protocolo: false,
@@ -97,29 +85,25 @@ export function VacinacaoForm({ idAnimal, onSuccess }: VacinacaoFormProps) {
       ]);
 
       if (vacinasRes.success) {
-        setVacinas(vacinasRes.data as Vacina[]);
+        setVacinas(vacinasRes.data);
       }
       if (protocolosRes.success) {
-        setProtocolos(
-          (protocolosRes.data as Protocolo[]).filter((p) => p.status === "ativo")
-        );
+        setProtocolos(protocolosRes.data.filter((p) => p.status === "ativo"));
       }
       setLoading(false);
     }
-    carregarDados();
+    void carregarDados();
   }, [idAnimal]);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async function onSubmit(data: any) {
+  async function onSubmit(data: VacinacaoAplicadaFormData) {
     setIsSubmitting(true);
     try {
-      // Ajuste para garantir tipos corretos
       if (!data.idvacina) {
          toast.error("Selecione uma vacina");
          setIsSubmitting(false);
          return;
       }
-      
+
       const response = await registrarVacinacao(data);
 
       if (response.success) {
@@ -129,7 +113,7 @@ export function VacinacaoForm({ idAnimal, onSuccess }: VacinacaoFormProps) {
       } else {
         toast.error(response.message);
       }
-    } catch (error) {
+    } catch {
       toast.error("Erro ao registrar vacinação");
     } finally {
       setIsSubmitting(false);
@@ -284,7 +268,7 @@ export function VacinacaoForm({ idAnimal, onSuccess }: VacinacaoFormProps) {
                         key={vac.idproduto}
                         value={vac.idproduto.toString()}
                       >
-                        {vac.produto.nome} (Lote: {vac.lote})
+                        {vac.produto?.nome ?? "Vacina"} (Lote: {vac.lote})
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -571,7 +555,7 @@ export function VacinacaoForm({ idAnimal, onSuccess }: VacinacaoFormProps) {
                 <div className="mt-2 text-sm text-yellow-700">
                   <p>
                     A data ({new Date(dataAplicacao + 'T00:00:00').toLocaleDateString('pt-BR')}) é diferente da prevista no protocolo 
-                    ({new Date(protocoloSelecionado?.data_proximo_reforco! + 'T00:00:00').toLocaleDateString('pt-BR')}).
+                    ({new Date(protocoloSelecionado!.data_proximo_reforco! + 'T00:00:00').toLocaleDateString('pt-BR')}).
                   </p>
                   <p className="mt-1 font-bold">
                     O registro será salvo assim mesmo.

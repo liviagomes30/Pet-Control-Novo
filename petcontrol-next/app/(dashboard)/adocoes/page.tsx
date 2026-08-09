@@ -1,4 +1,5 @@
 import { listarAdocoes } from "./_actions/adocao.actions";
+import type { AdocaoComRelacoes } from "./_actions/adocao.actions";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,7 +18,8 @@ export const metadata = {
 };
 
 export default async function AdocoesPage() {
-  const { data: adocoes } = await listarAdocoes();
+  const resultado = await listarAdocoes();
+  const adocoes = resultado.success ? resultado.data : [];
 
   return (
     <div className="container mx-auto py-8 px-4">
@@ -55,7 +57,7 @@ export default async function AdocoesPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              adocoes.map((adocao: any) => (
+              adocoes.map((adocao: AdocaoComRelacoes) => (
                 <TableRow key={adocao.idadocao}>
                   <TableCell className="font-medium">
                     {adocao.animal?.nome || "N/A"}

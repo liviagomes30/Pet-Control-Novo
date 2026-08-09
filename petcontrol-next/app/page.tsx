@@ -7,7 +7,6 @@ import {
 } from "@/components/ui/card";
 import { Heart, Users, Package, Calendar } from "lucide-react";
 import Link from "next/link";
-import { TestConnectionButton } from "./_components/TestConnectionButton";
 
 export default function Home() {
   return (
@@ -23,11 +22,6 @@ export default function Home() {
               <Button size="lg">Entrar</Button>
             </Link>
           </div>
-        </div>
-
-        {/* Teste de Conexão Supabase */}
-        <div className="mb-16">
-          <TestConnectionButton />
         </div>
 
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-16">

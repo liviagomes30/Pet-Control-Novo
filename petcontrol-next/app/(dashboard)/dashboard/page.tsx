@@ -2,8 +2,8 @@ import Link from "next/link";
 import {
   buscarEstatisticasDashboard,
   buscarProximosCompromissos,
-  ProximoCompromisso,
 } from "../_actions/dashboard.actions";
+import { type ProximoCompromisso, ESTATISTICAS_VAZIAS } from "../_actions/dashboard.types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,12 +31,11 @@ export default async function DashboardPage() {
     buscarProximosCompromissos(),
   ]);
 
-  const stats = statsRes.data;
-  const compromissos = compromissosRes.data || [];
+  const stats = statsRes.success ? statsRes.data : ESTATISTICAS_VAZIAS;
+  const compromissos = compromissosRes.success ? compromissosRes.data : [];
 
   // Filtrar para mostrar apenas pendentes primeiro
   const compromissosPendentes = compromissos.filter(c => c.status === "pendente");
-  const compromissosConcluidos = compromissos.filter(c => c.status === "concluido");
 
   const getUrgenciaBadge = (comp: ProximoCompromisso) => {
     if (comp.status === "concluido") {
@@ -48,6 +47,8 @@ export default async function DashboardPage() {
       );
     }
     switch (comp.urgencia) {
+      case "atrasado":
+        return <Badge className="bg-red-700">Atrasado</Badge>;
       case "hoje":
         return <Badge className="bg-red-500">Hoje</Badge>;
       case "amanha":

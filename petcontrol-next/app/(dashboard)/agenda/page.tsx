@@ -1,4 +1,5 @@
-import { buscarProximosCompromissos, ProximoCompromisso } from "../_actions/dashboard.actions";
+import { buscarProximosCompromissos } from "../_actions/dashboard.actions";
+import type { ProximoCompromisso } from "../_actions/dashboard.types";
 import {
   Table,
   TableBody,
@@ -17,7 +18,8 @@ export const metadata = {
 };
 
 export default async function AgendaPage() {
-  const { data: compromissos } = await buscarProximosCompromissos();
+  const compromissosRes = await buscarProximosCompromissos();
+  const compromissos = compromissosRes.success ? compromissosRes.data : [];
 
   const getIcon = (comp: ProximoCompromisso) => {
     if (comp.status === "concluido") {
@@ -43,6 +45,8 @@ export default async function AgendaPage() {
 
   const getUrgenciaBadge = (comp: ProximoCompromisso) => {
     switch (comp.urgencia) {
+      case "atrasado":
+        return <Badge className="bg-red-700">Atrasado</Badge>;
       case "hoje":
         return <Badge className="bg-red-500">Hoje</Badge>;
       case "amanha":
@@ -72,16 +76,6 @@ export default async function AgendaPage() {
     
     return dataFormatada;
   };
-
-  // Agrupar por data
-  const compromissosPorData = (compromissos || []).reduce((acc, comp) => {
-    const data = comp.dataAgendada.split("T")[0];
-    if (!acc[data]) {
-      acc[data] = [];
-    }
-    acc[data].push(comp);
-    return acc;
-  }, {} as Record<string, ProximoCompromisso[]>);
 
   return (
     <div className="container mx-auto py-8 px-4">

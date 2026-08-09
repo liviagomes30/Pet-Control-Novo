@@ -16,7 +16,8 @@ export const metadata = {
 };
 
 export default async function ProdutosPage() {
-  const { data: produtos } = await listarProdutosComEstoque();
+  const resultado = await listarProdutosComEstoque();
+  const produtos = resultado.success ? resultado.data : [];
 
   const getEstoqueBadge = (produto: ProdutoComEstoque) => {
     const quantidade = produto.estoque?.quantidade || 0;

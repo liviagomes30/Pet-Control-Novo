@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -21,6 +21,7 @@ import {
   excluirReceita,
   suspenderReceita,
   verificarPodeExcluir,
+  type ReceitaComPosologias,
 } from "../_actions/receita.actions";
 
 interface ReceitaListProps {
@@ -28,43 +29,33 @@ interface ReceitaListProps {
   readonly onUpdate?: () => void;
 }
 
-type Receita = {
-  idreceita: number;
-  data: string;
-  medico: string;
-  clinica?: string;
-  status: string;
-  posologias: Array<{
-    medicamento_idproduto: number;
-    dose: string;
-    medicamento?: { produto?: { nome: string } };
-  }>;
-};
-
 export function ReceitaList({ idAnimal, onUpdate }: ReceitaListProps) {
-  const [receitas, setReceitas] = useState<Receita[]>([]);
+  const [receitas, setReceitas] = useState<ReceitaComPosologias[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
 
-  const loadReceitas = async () => {
+  const loadReceitas = useCallback(async () => {
     setLoading(true);
     const response = await listarReceitasPorAnimal(idAnimal);
-    if (response.success && response.data) {
+    if (response.success) {
       setReceitas(response.data);
     }
     setLoading(false);
-  };
+  }, [idAnimal]);
 
   useEffect(() => {
-    loadReceitas();
-  }, [idAnimal]);
+    // Carregamento inicial com indicador de loading — mesmo padrão usado
+    // em todos os outros formulários do app.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadReceitas();
+  }, [loadReceitas]);
 
   const handleExcluir = async (idReceita: number) => {
     setActionLoading(idReceita);
     
     // Verificar se pode excluir
     const checkResponse = await verificarPodeExcluir(idReceita);
-    if (!checkResponse.data?.podeExcluir) {
+    if (!checkResponse.success || !checkResponse.data.podeExcluir) {
       toast.error(checkResponse.message || "Não é possível excluir esta receita");
       setActionLoading(null);
       return;
@@ -73,7 +64,7 @@ export function ReceitaList({ idAnimal, onUpdate }: ReceitaListProps) {
     const response = await excluirReceita(idReceita);
     if (response.success) {
       toast.success(response.message);
-      loadReceitas();
+      void loadReceitas();
       onUpdate?.();
     } else {
       toast.error(response.message);
@@ -86,7 +77,7 @@ export function ReceitaList({ idAnimal, onUpdate }: ReceitaListProps) {
     const response = await suspenderReceita(idReceita);
     if (response.success) {
       toast.success(response.message);
-      loadReceitas();
+      void loadReceitas();
       onUpdate?.();
     } else {
       toast.error(response.message);
@@ -151,7 +142,7 @@ export function ReceitaList({ idAnimal, onUpdate }: ReceitaListProps) {
               <div className="text-sm text-gray-500 flex items-center gap-4">
                 <span className="flex items-center gap-1">
                   <Clock className="h-3 w-3" />
-                  {formatarData(receita.data)}
+                  {formatarData(receita.data ?? "")}
                 </span>
                 {receita.clinica && <span>{receita.clinica}</span>}
               </div>
@@ -238,8 +229,8 @@ export function ReceitaList({ idAnimal, onUpdate }: ReceitaListProps) {
                   className="flex items-center gap-1 text-sm bg-green-50 text-green-700 px-2 py-1 rounded"
                 >
                   <Pill className="h-3 w-3" />
-                  {pos.medicamento?.produto?.nome || `Medicamento #${pos.medicamento_idproduto}`}
-                  <span className="text-xs">({pos.dose})</span>
+                  {typeof pos.produto === "string" ? pos.produto : "Medicamento"}
+                  <span className="text-xs">({typeof pos.dose === "string" ? pos.dose : "-"})</span>
                 </div>
               ))}
             </div>

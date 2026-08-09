@@ -1,12 +1,7 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
-
-type ActionResponse<T = unknown> = {
-  success: boolean;
-  message: string;
-  data?: T;
-};
+import { requireUser } from "@/lib/auth/require-user";
+import { falha, sucesso, type ActionResult } from "@/lib/actions/result";
 
 export type ProdutoComEstoque = {
   idproduto: number;
@@ -27,9 +22,9 @@ export type ProdutoComEstoque = {
 /**
  * Listar todos os produtos com estoque
  */
-export async function listarProdutosComEstoque(): Promise<ActionResponse<ProdutoComEstoque[]>> {
+export async function listarProdutosComEstoque(): Promise<ActionResult<ProdutoComEstoque[]>> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     // Buscar produtos
     const { data: produtos, error: produtosError } = await supabase
@@ -37,9 +32,7 @@ export async function listarProdutosComEstoque(): Promise<ActionResponse<Produto
       .select("*")
       .order("nome", { ascending: true });
 
-    if (produtosError) {
-      return { success: false, message: produtosError.message };
-    }
+    if (produtosError) return falha(produtosError, "listarProdutosComEstoque");
 
     // Buscar dados relacionados para cada produto
     const produtosCompletos = await Promise.all(
@@ -83,49 +76,8 @@ export async function listarProdutosComEstoque(): Promise<ActionResponse<Produto
       })
     );
 
-    return {
-      success: true,
-      message: "Produtos carregados",
-      data: produtosCompletos,
-    };
+    return sucesso(produtosCompletos, "Produtos carregados");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
-  }
-}
-
-/**
- * Filtrar produtos por nome ou tipo
- */
-export async function filtrarProdutos(
-  termo: string,
-  campo: "nome" | "tipo"
-): Promise<ActionResponse> {
-  try {
-    const supabase = await createClient();
-
-    if (campo === "nome") {
-      const { data, error } = await supabase
-        .from("produto")
-        .select("*")
-        .ilike("nome", `%${termo}%`)
-        .order("nome", { ascending: true });
-
-      if (error) {
-        return { success: false, message: error.message };
-      }
-
-      return { success: true, message: "Produtos filtrados", data };
-    }
-
-    // Filtrar por tipo é mais complexo, precisa buscar o tipo primeiro
-    return { success: true, message: "Filtro por tipo não implementado ainda", data: [] };
-  } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "listarProdutosComEstoque");
   }
 }

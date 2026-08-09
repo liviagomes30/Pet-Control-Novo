@@ -1,99 +1,40 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
 import { adocaoSchema, AdocaoFormData } from "../_schemas/adocao.schema";
 import { revalidatePath } from "next/cache";
+import { requireUser } from "@/lib/auth/require-user";
+import { falha, invalido, sucesso, type ActionResult } from "@/lib/actions/result";
+import type { Adocao, Animal, Pessoa } from "@/lib/database.types";
 
-type ActionResponse<T = unknown> = {
-  success: boolean;
-  message: string;
-  data?: T;
-  errors?: Record<string, string[]>;
+export type AdocaoComRelacoes = Adocao & {
+  animal: Pick<Animal, "nome" | "especie"> | null;
+  adotante: Pick<Pessoa, "nome" | "cpf" | "telefone"> | null;
 };
 
 /**
- * Listar todas as adoções
+ * Listar todas as adoções, com animal e adotante já resolvidos via join
+ * (evita N+1: antes eram 1 + 2 queries por adoção).
  */
-export async function listarAdocoes(): Promise<ActionResponse> {
+export async function listarAdocoes(): Promise<ActionResult<AdocaoComRelacoes[]>> {
   try {
-    const supabase = await createClient();
-    
-    // Buscar adoções com joins manuais
-    const { data: adocoesData, error } = await supabase
-      .from("adocao")
-      .select("*")
-      .order("dataadocao", { ascending: false });
+    const { supabase } = await requireUser();
 
-    if (error) {
-      console.error("Erro ao listar adoções:", error);
-      return { success: false, message: error.message };
-    }
-
-    // Se não há adoções, retornar array vazio
-    if (!adocoesData || adocoesData.length === 0) {
-      return { success: true, message: "Adoções carregadas", data: [] };
-    }
-
-    // Buscar dados relacionados manualmente
-    const adocoesComRelacoes = await Promise.all(
-      adocoesData.map(async (adocao) => {
-        const [animalRes, adotanteRes] = await Promise.all([
-          supabase
-            .from("animal")
-            .select("nome, especie")
-            .eq("idanimal", adocao.idanimal)
-            .single(),
-          supabase
-            .from("pessoa")
-            .select("nome, cpf, telefone")
-            .eq("idpessoa", adocao.idadotante)
-            .single(),
-        ]);
-
-        return {
-          ...adocao,
-          animal: animalRes.data,
-          adotante: adotanteRes.data,
-        };
-      })
-    );
-
-    return { success: true, message: "Adoções carregadas", data: adocoesComRelacoes };
-  } catch (error) {
-    console.error("Erro ao listar adoções:", error);
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
-  }
-}
-
-/**
- * Buscar adoção por ID
- */
-export async function buscarAdocaoPorId(id: number): Promise<ActionResponse> {
-  try {
-    const supabase = await createClient();
     const { data, error } = await supabase
       .from("adocao")
-      .select(`
+      .select(
+        `
         *,
         animal:animal(nome, especie),
         adotante:pessoa!adocao_idadotante_fkey(nome, cpf, telefone)
-      `)
-      .eq("idadocao", id)
-      .single();
+      `,
+      )
+      .order("dataadocao", { ascending: false });
 
-    if (error) {
-      return { success: false, message: "Adoção não encontrada" };
-    }
+    if (error) return falha(error, "listarAdocoes");
 
-    return { success: true, message: "Adoção encontrada", data };
+    return sucesso(data ?? [], "Adoções carregadas");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "listarAdocoes");
   }
 }
 
@@ -106,26 +47,19 @@ export async function buscarAdocaoPorId(id: number): Promise<ActionResponse> {
  */
 export async function registrarAdocao(
   formData: AdocaoFormData
-): Promise<ActionResponse> {
+): Promise<ActionResult<Adocao>> {
   const validacao = adocaoSchema.safeParse(formData);
-
-  if (!validacao.success) {
-    return {
-      success: false,
-      message: "Dados inválidos",
-      errors: validacao.error.flatten().fieldErrors,
-    };
-  }
+  if (!validacao.success) return invalido(validacao.error);
 
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
 
     // 1. Verificar se animal está disponível
     const { data: animal, error: animalError } = await supabase
       .from("animal")
       .select("status, nome")
       .eq("idanimal", validacao.data.idanimal)
-      .single();
+      .maybeSingle();
 
     if (animalError || !animal) {
       return { success: false, message: "Animal não encontrado" };
@@ -143,7 +77,7 @@ export async function registrarAdocao(
       .from("pessoa")
       .select("nome")
       .eq("idpessoa", validacao.data.idadotante)
-      .single();
+      .maybeSingle();
 
     // 3. Inserir adoção
     const { data: novaAdocao, error: adocaoError } = await supabase
@@ -160,12 +94,7 @@ export async function registrarAdocao(
       .select()
       .single();
 
-    if (adocaoError) {
-      return {
-        success: false,
-        message: `Erro ao registrar adoção: ${adocaoError.message}`,
-      };
-    }
+    if (adocaoError) return falha(adocaoError, "registrarAdocao:inserirAdocao");
 
     // 4. Atualizar status do animal para "Adotado"
     const { error: updateError } = await supabase
@@ -173,85 +102,72 @@ export async function registrarAdocao(
       .update({ status: "Adotado" })
       .eq("idanimal", validacao.data.idanimal);
 
-    if (updateError) {
-      return {
-        success: false,
-        message: `Erro ao atualizar status do animal: ${updateError.message}`,
-      };
-    }
+    if (updateError) return falha(updateError, "registrarAdocao:atualizarAnimal");
 
-    // 5. Criar registro no histórico
+    // 5. Criar registro no histórico (best-effort: falha aqui não desfaz a adoção já registrada)
     const { error: historicoError } = await supabase.from("historico").insert({
       descricao: `Animal adotado por ${adotante?.nome || "adotante"}`,
-      data: new Date().toISOString(),
+      data: validacao.data.dataadocao,
       animal_idanimal: validacao.data.idanimal,
     });
 
     if (historicoError) {
-      console.error("Erro ao criar histórico:", historicoError);
-      // Não falha a operação se o histórico não for criado
+      console.error("[registrarAdocao:historico]", historicoError);
     }
 
     revalidatePath("/adocoes");
     revalidatePath("/animais");
-    return {
-      success: true,
-      message: `${animal.nome} foi adotado com sucesso!`,
-      data: novaAdocao,
-    };
+    return sucesso(novaAdocao, `${animal.nome} foi adotado com sucesso!`);
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "registrarAdocao");
   }
 }
 
 /**
  * Listar animais disponíveis para adoção
  */
-export async function listarAnimaisDisponiveis(): Promise<ActionResponse> {
+export type AnimalDisponivel = Pick<
+  Animal,
+  "idanimal" | "nome" | "especie" | "raca" | "porte" | "sexo"
+>;
+
+export async function listarAnimaisDisponiveis(): Promise<ActionResult<AnimalDisponivel[]>> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
     const { data, error } = await supabase
       .from("animal")
       .select("idanimal, nome, especie, raca, porte, sexo")
       .eq("status", "Disponível")
       .order("nome", { ascending: true });
 
-    if (error) {
-      return { success: false, message: error.message };
-    }
+    if (error) return falha(error, "listarAnimaisDisponiveis");
 
-    return { success: true, message: "Animais disponíveis carregados", data };
+    return sucesso(data ?? [], "Animais disponíveis carregados");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "listarAnimaisDisponiveis");
   }
 }
 
 /**
  * Listar pessoas (adotantes)
  */
-export async function listarPessoas(): Promise<ActionResponse> {
+export type PessoaResumo = Pick<
+  Pessoa,
+  "idpessoa" | "nome" | "cpf" | "telefone" | "email"
+>;
+
+export async function listarPessoas(): Promise<ActionResult<PessoaResumo[]>> {
   try {
-    const supabase = await createClient();
+    const { supabase } = await requireUser();
     const { data, error } = await supabase
       .from("pessoa")
       .select("idpessoa, nome, cpf, telefone, email")
       .order("nome", { ascending: true });
 
-    if (error) {
-      return { success: false, message: error.message };
-    }
+    if (error) return falha(error, "listarPessoas");
 
-    return { success: true, message: "Pessoas carregadas", data };
+    return sucesso(data ?? [], "Pessoas carregadas");
   } catch (error) {
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Erro desconhecido",
-    };
+    return falha(error, "listarPessoas");
   }
 }
