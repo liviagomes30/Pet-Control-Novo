@@ -774,10 +774,6 @@ CREATE TABLE public.posologia (
   horarios_calculados          boolean                    DEFAULT false
 );
 
-ALTER TABLE public.agendamedicacao
-  ADD CONSTRAINT agendamedicacao_posologia_fkey FOREIGN KEY (posologia_receitamedicamento_idreceita, posologia_medicamento_idproduto)
-    REFERENCES public.posologia(receitamedicamento_idreceita, medicamento_idproduto) ON DELETE CASCADE;
-
 COMMENT ON COLUMN public.posologia.hora_primeira_dose IS 'Hora em que a primeira dose foi administrada. Usada para calcular os próximos horários.';
 
 COMMENT ON COLUMN public.posologia.horarios_calculados IS 'Indica se os horários dos agendamentos já foram calculados com base na primeira dose.';
@@ -787,6 +783,10 @@ ALTER TABLE public.posologia
 
 ALTER TABLE public.posologia
   ADD CONSTRAINT posologia_pkey PRIMARY KEY (medicamento_idproduto, receitamedicamento_idreceita);
+
+ALTER TABLE public.agendamedicacao
+  ADD CONSTRAINT agendamedicacao_posologia_fkey FOREIGN KEY (posologia_receitamedicamento_idreceita, posologia_medicamento_idproduto)
+    REFERENCES public.posologia(receitamedicamento_idreceita, medicamento_idproduto) ON DELETE CASCADE;
 
 GRANT ALL ON public.posologia TO anon;
 
